@@ -5,8 +5,6 @@ import (
 	"errors"
 )
 
-const DNSHeaderLength = 12
-
 type RCode uint8
 
 const (
