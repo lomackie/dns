@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/binary"
 	"errors"
+	"net"
 )
 
 type MessageType int
@@ -10,6 +11,43 @@ type MessageType int
 const (
 	Query MessageType = iota
 	Response
+)
+
+type RecordType uint16
+
+const (
+	RTA     RecordType = 1
+	RTNS    RecordType = 2
+	RTMD    RecordType = 3
+	RTMF    RecordType = 4
+	RTCNAME RecordType = 5
+	RTSOA   RecordType = 6
+	RTMB    RecordType = 7
+	RTMG    RecordType = 8
+	RTMR    RecordType = 9
+	RTNULL  RecordType = 10
+	RTWKS   RecordType = 11
+	RTPTR   RecordType = 12
+	RTHINFO RecordType = 13
+	RTMINFO RecordType = 14
+	RTMX    RecordType = 15
+	RTTXT   RecordType = 16
+
+	RTAXFR  RecordType = 252
+	RTMAILB RecordType = 253
+	RTMAILA RecordType = 254
+	RTSTAR  RecordType = 255
+)
+
+type RecordClass uint16
+
+const (
+	RCIN RecordClass = 1
+	RCCS RecordClass = 2
+	RCCH RecordClass = 3
+	RCHS RecordClass = 4
+
+	RCSTAR RecordClass = 255
 )
 
 type RCode uint8
@@ -23,6 +61,82 @@ const (
 	Refused
 )
 
+type RData interface{}
+
+type ARecord struct {
+	IP net.IP
+}
+
+type NSRecord struct {
+	Name string
+}
+
+type MDRecord struct {
+	Name string
+}
+
+type MFRecord struct {
+	Name string
+}
+
+type CNameRecord struct {
+	Name string
+}
+
+type SOARecord struct {
+	MName   string
+	RName   string
+	Serial  uint32
+	Refresh uint32
+	Expire  uint32
+	Minimum uint32
+}
+
+type MBRecord struct {
+	Name string
+}
+
+type MGRecord struct {
+	Name string
+}
+
+type MRRecord struct {
+	Name string
+}
+
+type NullRecord struct {
+	Anything []byte
+}
+
+type WKSRecord struct {
+	Address  net.IP
+	Protocol uint8
+	Bitmap   []byte
+}
+
+type PTRRecord struct {
+	Name string
+}
+
+type HInfoRecord struct {
+	CPU string
+	OS  string
+}
+
+type MInfoRecord struct {
+	RMailBX string
+	EMailBX string
+}
+
+type MXRecord struct {
+	Preference uint16
+	Exchange   string
+}
+
+type TXTRecord struct {
+	Data []string
+}
+
 type DNSHeader struct {
 	ID      uint16
 	flags   uint16
@@ -34,17 +148,17 @@ type DNSHeader struct {
 
 type DNSQuestion struct {
 	QName  string
-	QType  uint16
-	QClass uint16
+	QType  RecordType
+	QClass RecordClass
 }
 
 type DNSResourceRecord struct {
 	Name     string
-	Type     uint16
-	Class    uint16
+	Type     RecordType
+	Class    RecordClass
 	TTL      uint32
 	RDLength uint16
-	RData    []byte
+	RData    RData
 }
 
 type DNSMessage struct {
@@ -163,7 +277,7 @@ func parseDNSHeader(r *dnsReader, mode MessageType) (DNSHeader, error) {
 	return h, nil
 }
 
-func parseQName(r *dnsReader) (string, error) {
+func parseName(r *dnsReader) (string, error) {
 	result := ""
 	for {
 		length, err := r.ReadByte()
@@ -175,7 +289,7 @@ func parseQName(r *dnsReader) (string, error) {
 		}
 		token, err := r.ReadBytes(int(length))
 		if err != nil {
-			return "", errors.New("QName not long enough")
+			return "", errors.New("(Q)Name not long enough")
 		}
 		result += string(token) + "."
 	}
@@ -190,18 +304,157 @@ func parseDNSQuestion(r *dnsReader, qdCount uint16) ([]DNSQuestion, error) {
 	var err error
 	for i := 0; i < int(qdCount); i++ {
 		q := DNSQuestion{}
-		if q.QName, err = parseQName(r); err != nil {
+		if q.QName, err = parseName(r); err != nil {
 			return nil, err
 		}
-		if q.QType, err = r.ReadUint16(); err != nil {
+		if t, err := r.ReadUint16(); err != nil {
 			return nil, err
+		} else {
+			q.QType = RecordType(t)
 		}
-		if q.QClass, err = r.ReadUint16(); err != nil {
+		if c, err := r.ReadUint16(); err != nil {
 			return nil, err
+		} else {
+			q.QClass = RecordClass(c)
 		}
 		questions[i] = q
 	}
 	return questions, nil
+}
+
+func parseARecord(r *dnsReader) (ARecord, error) {
+	return ARecord{}, nil
+}
+
+func parseNSRecord(r *dnsReader) (NSRecord, error) {
+	return NSRecord{}, nil
+}
+
+func parseMDRecord(r *dnsReader) (MDRecord, error) {
+	return MDRecord{}, nil
+}
+
+func parseMFRecord(r *dnsReader) (MFRecord, error) {
+	return MFRecord{}, nil
+}
+
+func parseCNameRecord(r *dnsReader) (CNameRecord, error) {
+	return CNameRecord{}, nil
+}
+
+func parseSOARecord(r *dnsReader) (SOARecord, error) {
+	return SOARecord{}, nil
+}
+
+func parseMBRecord(r *dnsReader) (MBRecord, error) {
+	return MBRecord{}, nil
+}
+
+func parseMGRecord(r *dnsReader) (MGRecord, error) {
+	return MGRecord{}, nil
+}
+
+func parseMRRecord(r *dnsReader) (MRRecord, error) {
+	return MRRecord{}, nil
+}
+
+func parseNullRecord(r *dnsReader) (NullRecord, error) {
+	return NullRecord{}, nil
+}
+
+func parseWKSRecord(r *dnsReader) (WKSRecord, error) {
+	return WKSRecord{}, nil
+}
+
+func parsePTRRecord(r *dnsReader) (PTRRecord, error) {
+	return PTRRecord{}, nil
+}
+
+func parseHInfoRecord(r *dnsReader) (HInfoRecord, error) {
+	return HInfoRecord{}, nil
+}
+
+func parseMInfoRecord(r *dnsReader) (MInfoRecord, error) {
+	return MInfoRecord{}, nil
+}
+
+func parseMXRecord(r *dnsReader) (MXRecord, error) {
+	return MXRecord{}, nil
+}
+
+func parseTXTRecord(r *dnsReader) (TXTRecord, error) {
+	return TXTRecord{}, nil
+}
+
+func parseRData(r *dnsReader, rt RecordType, rc RecordClass) (RData, error) {
+	switch rt {
+	case RTA:
+		return parseARecord(r)
+	case RTNS:
+		return parseNSRecord(r)
+	case RTMD:
+		return parseMDRecord(r)
+	case RTMF:
+		return parseMXRecord(r)
+	case RTCNAME:
+		return parseCNameRecord(r)
+	case RTSOA:
+		return parseSOARecord(r)
+	case RTMB:
+		return parseMBRecord(r)
+	case RTMG:
+		return parseMGRecord(r)
+	case RTMR:
+		return parseMRRecord(r)
+	case RTNULL:
+		return parseNullRecord(r)
+	case RTWKS:
+		return parseWKSRecord(r)
+	case RTPTR:
+		return parsePTRRecord(r)
+	case RTHINFO:
+		return parseHInfoRecord(r)
+	case RTMINFO:
+		return parseMInfoRecord(r)
+	case RTMX:
+		return parseMXRecord(r)
+	case RTTXT:
+		return parseTXTRecord(r)
+	default:
+		return "", errors.New("Unsupported TYPE")
+	}
+}
+
+func parseDNSResourceRecord(r *dnsReader, count uint16) ([]DNSResourceRecord, error) {
+	records := make([]DNSResourceRecord, count)
+	var err error
+	for i := 0; i < int(count); i++ {
+		rr := DNSResourceRecord{}
+		if rr.Name, err = parseName(r); err != nil {
+			return nil, err
+		}
+		if t, err := r.ReadUint16(); err != nil {
+			return nil, err
+		} else {
+			rr.Type = RecordType(t)
+		}
+		if c, err := r.ReadUint16(); err != nil {
+			return nil, err
+		} else {
+			rr.Class = RecordClass(c)
+		}
+		if rr.TTL, err = r.ReadUint32(); err != nil {
+			return nil, err
+		}
+		if rr.RDLength, err = r.ReadUint16(); err != nil {
+			return nil, err
+		}
+		if rr.RData, err = parseRData(r, rr.Type, rr.Class); err != nil {
+			return nil, err
+		}
+		records[i] = rr
+	}
+	return records, nil
 }
 
 func (r *dnsReader) ReadUint16() (uint16, error) {
@@ -210,6 +463,15 @@ func (r *dnsReader) ReadUint16() (uint16, error) {
 	}
 	val := binary.BigEndian.Uint16(r.data[r.pos : r.pos+2])
 	r.pos += 2
+	return val, nil
+}
+
+func (r *dnsReader) ReadUint32() (uint32, error) {
+	if r.pos+4 > len(r.data) {
+		return 0, errors.New("Out of bounds while reading uint32")
+	}
+	val := binary.BigEndian.Uint32(r.data[r.pos : r.pos+4])
+	r.pos += 4
 	return val, nil
 }
 
@@ -242,6 +504,9 @@ func ParseDNSMessage(query []byte, mode MessageType) (DNSMessage, error) {
 
 	if m.Questions, err = parseDNSQuestion(&r, m.Header.QDCount); err != nil {
 		return DNSMessage{}, err
+	}
+	if mode == Query {
+		return m, nil
 	}
 	return m, nil
 }
