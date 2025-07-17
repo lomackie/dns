@@ -5,6 +5,13 @@ import (
 	"errors"
 )
 
+type MessageType int
+
+const (
+	Query MessageType = iota
+	Response
+)
+
 type RCode uint8
 
 const (
@@ -85,38 +92,48 @@ func (h *DNSHeader) RCode() uint8 {
 	return uint8(h.flags & 0x000F)
 }
 
-func (h *DNSHeader) validateQueryHeader() error {
-	if h.QR() {
-		return errors.New("QR bit set in query")
-	}
-	if h.AA() {
-		return errors.New("AA bit set in query")
-	}
-	if h.RA() {
-		return errors.New("RA bit set in query")
-	}
-	if h.Z() > 0 {
-		return errors.New("Z must be zero")
-	}
-	if h.RCode() > 0 {
-		return errors.New("RCODE set in query")
-	}
-	if h.QDCount == 0 {
-		return errors.New("QDCOUNT set to zero")
-	}
-	if h.ANCount > 0 {
-		return errors.New("ANCOUNT set in query")
-	}
-	if h.NSCount > 0 {
-		return errors.New("NSCOUNT set in query")
-	}
-	if h.ARCount > 0 {
-		return errors.New("ARCOUNT set in query")
+func (h *DNSHeader) validateHeader(mode MessageType) error {
+	switch mode {
+	case Query:
+		if h.QR() {
+			return errors.New("QR bit set in query")
+		}
+		if h.AA() {
+			return errors.New("AA bit set in query")
+		}
+		if h.RA() {
+			return errors.New("RA bit set in query")
+		}
+		if h.Z() > 0 {
+			return errors.New("Z must be zero")
+		}
+		if h.RCode() > 0 {
+			return errors.New("RCODE set in query")
+		}
+		if h.QDCount == 0 {
+			return errors.New("QDCOUNT set to zero")
+		}
+		if h.ANCount > 0 {
+			return errors.New("ANCOUNT set in query")
+		}
+		if h.NSCount > 0 {
+			return errors.New("NSCOUNT set in query")
+		}
+		if h.ARCount > 0 {
+			return errors.New("ARCOUNT set in query")
+		}
+	case Response:
+		if !h.QR() {
+			return errors.New("QR bit not set in response")
+		}
+		if h.QDCount == 0 {
+			return errors.New("QCount not non-zero in response")
+		}
 	}
 	return nil
 }
 
-func parseDNSHeader(r *dnsReader) (DNSHeader, error) {
+func parseDNSHeader(r *dnsReader, mode MessageType) (DNSHeader, error) {
 	h := DNSHeader{}
 	var err error
 
@@ -139,7 +156,7 @@ func parseDNSHeader(r *dnsReader) (DNSHeader, error) {
 		return DNSHeader{}, err
 	}
 
-	err = h.validateQueryHeader()
+	err = h.validateHeader(mode)
 	if err != nil {
 		return DNSHeader{}, err
 	}
@@ -214,12 +231,12 @@ func (r *dnsReader) ReadByte() (byte, error) {
 	return val, nil
 }
 
-func ParseDNSMessage(query []byte) (DNSMessage, error) {
+func ParseDNSMessage(query []byte, mode MessageType) (DNSMessage, error) {
 	m := DNSMessage{}
 	var err error
 	r := dnsReader{data: query}
 
-	if m.Header, err = parseDNSHeader(&r); err != nil {
+	if m.Header, err = parseDNSHeader(&r, mode); err != nil {
 		return DNSMessage{}, err
 	}
 

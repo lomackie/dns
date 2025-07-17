@@ -73,7 +73,7 @@ func TestParseDNSMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg, err := ParseDNSMessage(tt.query)
+			msg, err := ParseDNSMessage(tt.query, Query)
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("expected error, got none")
