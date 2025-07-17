@@ -27,9 +27,9 @@ func main() {
 
 		resp := make([]byte, 512)
 		rn, _, err := remoteConn.ReadFromUDP(resp)
-		fmt.Println(resp)
+		fmt.Println(resp[:rn])
 		conn.WriteToUDP(resp[:rn], clientAddr)
-		m2, err := parser.ParseDNSMessage(resp[:n], parser.Response)
+		m2, err := parser.ParseDNSMessage(resp[:rn], parser.Response)
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -10,7 +10,7 @@ func TestParseDNSMessage(t *testing.T) {
 		query       []byte
 		expectError bool
 		expectQName string
-		expectQType uint16
+		expectQType RecordType
 	}{
 		{
 			name: "valid A query for example.com",
