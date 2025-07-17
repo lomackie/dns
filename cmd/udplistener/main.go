@@ -16,7 +16,7 @@ func main() {
 	buf := make([]byte, 512)
 	for {
 		n, _, _ := conn.ReadFromUDP(buf)
-		m, err := parser.ParseDNSMessage(buf[:n])
+		m, err := parser.ParseDNSMessage(buf[:n], parser.Query)
 		if err != nil {
 			log.Fatal(err)
 		}
