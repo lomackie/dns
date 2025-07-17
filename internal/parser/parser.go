@@ -63,6 +63,14 @@ const (
 	Refused
 )
 
+type parseStatus int
+
+const (
+	parsingHeader parseStatus = iota
+	parsingQuestion
+	parsingResourceRecords
+)
+
 type RData any
 
 type ARecord struct {
@@ -175,6 +183,7 @@ type DNSMessage struct {
 type dnsReader struct {
 	data        []byte
 	pos         int
+	parseStatus parseStatus
 	offsetStack []uint16
 }
 
@@ -252,6 +261,9 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 }
 
 func parseDNSHeader(r *dnsReader, mode MessageType) (DNSHeader, error) {
+	if r.parseStatus != parsingHeader {
+		return DNSHeader{}, errors.New("Parser in incorrect state")
+	}
 	h := DNSHeader{}
 	var err error
 
@@ -278,10 +290,14 @@ func parseDNSHeader(r *dnsReader, mode MessageType) (DNSHeader, error) {
 	if err != nil {
 		return DNSHeader{}, err
 	}
+	r.parseStatus = parsingQuestion
 	return h, nil
 }
 
 func parseDNSQuestion(r *dnsReader, qdCount uint16) ([]DNSQuestion, error) {
+	if r.parseStatus != parsingQuestion {
+		return nil, errors.New("Parser in incorrect state")
+	}
 	questions := make([]DNSQuestion, qdCount)
 	var err error
 	for i := 0; i < int(qdCount); i++ {
@@ -301,10 +317,11 @@ func parseDNSQuestion(r *dnsReader, qdCount uint16) ([]DNSQuestion, error) {
 		}
 		questions[i] = q
 	}
+	r.parseStatus = parsingResourceRecords
 	return questions, nil
 }
 
-func parseARecord(r *dnsReader, length uint16) (ARecord, error) {
+func parseARecord(r *dnsReader) (ARecord, error) {
 	res := ARecord{}
 	ipBytes, err := r.ReadBytes(4)
 	if err != nil {
@@ -315,7 +332,7 @@ func parseARecord(r *dnsReader, length uint16) (ARecord, error) {
 	return res, nil
 }
 
-func parseNSRecord(r *dnsReader, length uint16) (NSRecord, error) {
+func parseNSRecord(r *dnsReader) (NSRecord, error) {
 	res := NSRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -325,7 +342,7 @@ func parseNSRecord(r *dnsReader, length uint16) (NSRecord, error) {
 	return res, nil
 }
 
-func parseMDRecord(r *dnsReader, length uint16) (MDRecord, error) {
+func parseMDRecord(r *dnsReader) (MDRecord, error) {
 	res := MDRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -335,7 +352,7 @@ func parseMDRecord(r *dnsReader, length uint16) (MDRecord, error) {
 	return res, nil
 }
 
-func parseMFRecord(r *dnsReader, length uint16) (MFRecord, error) {
+func parseMFRecord(r *dnsReader) (MFRecord, error) {
 	res := MFRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -345,17 +362,17 @@ func parseMFRecord(r *dnsReader, length uint16) (MFRecord, error) {
 	return res, nil
 }
 
-func parseCNameRecord(r *dnsReader, length uint16) (CNameRecord, error) {
+func parseCNameRecord(r *dnsReader) (CNameRecord, error) {
 	res := CNameRecord{}
 	var err error
 	res.Name, err = r.ReadName()
 	if err != nil {
-		return CNameRecord{}, nil
+		return CNameRecord{}, err
 	}
 	return res, nil
 }
 
-func parseSOARecord(r *dnsReader, length uint16) (SOARecord, error) {
+func parseSOARecord(r *dnsReader) (SOARecord, error) {
 	res := SOARecord{}
 	var err error
 	res.MName, err = r.ReadName()
@@ -389,7 +406,7 @@ func parseSOARecord(r *dnsReader, length uint16) (SOARecord, error) {
 	return res, nil
 }
 
-func parseMBRecord(r *dnsReader, length uint16) (MBRecord, error) {
+func parseMBRecord(r *dnsReader) (MBRecord, error) {
 	res := MBRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -399,7 +416,7 @@ func parseMBRecord(r *dnsReader, length uint16) (MBRecord, error) {
 	return res, nil
 }
 
-func parseMGRecord(r *dnsReader, length uint16) (MGRecord, error) {
+func parseMGRecord(r *dnsReader) (MGRecord, error) {
 	res := MGRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -409,7 +426,7 @@ func parseMGRecord(r *dnsReader, length uint16) (MGRecord, error) {
 	return res, nil
 }
 
-func parseMRRecord(r *dnsReader, length uint16) (MRRecord, error) {
+func parseMRRecord(r *dnsReader) (MRRecord, error) {
 	res := MRRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -419,22 +436,36 @@ func parseMRRecord(r *dnsReader, length uint16) (MRRecord, error) {
 	return res, nil
 }
 
-func parseNullRecord(r *dnsReader, length uint16) (NullRecord, error) {
+func parseNullRecord(r *dnsReader, length int) (NullRecord, error) {
 	res := NullRecord{}
 	var err error
-	// r is an RDLength slice of the buffer, so this only reads to the end of the RData segment
-	res.Anything, err = r.ReadBytes(len(r.data))
+	res.Anything, err = r.ReadBytes(length)
 	if err != nil {
 		return NullRecord{}, err
 	}
 	return res, nil
 }
 
-func parseWKSRecord(r *dnsReader, length uint16) (WKSRecord, error) {
-	return WKSRecord{}, nil
+func parseWKSRecord(r *dnsReader, length int) (WKSRecord, error) {
+	res := WKSRecord{}
+	a, err := r.ReadBytes(4)
+	if err != nil {
+		return WKSRecord{}, err
+	} else {
+		res.Address = net.IP(a).To4()
+	}
+	res.Protocol, err = r.ReadUint8()
+	if err != nil {
+		return WKSRecord{}, err
+	}
+	res.Bitmap, err = r.ReadBytes(length - 5)
+	if err != nil {
+		return WKSRecord{}, err
+	}
+	return res, nil
 }
 
-func parsePTRRecord(r *dnsReader, length uint16) (PTRRecord, error) {
+func parsePTRRecord(r *dnsReader) (PTRRecord, error) {
 	res := PTRRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -444,7 +475,7 @@ func parsePTRRecord(r *dnsReader, length uint16) (PTRRecord, error) {
 	return res, nil
 }
 
-func parseHInfoRecord(r *dnsReader, length uint16) (HInfoRecord, error) {
+func parseHInfoRecord(r *dnsReader) (HInfoRecord, error) {
 	res := HInfoRecord{}
 	var err error
 	res.CPU, err = r.ReadString()
@@ -458,7 +489,7 @@ func parseHInfoRecord(r *dnsReader, length uint16) (HInfoRecord, error) {
 	return res, nil
 }
 
-func parseMInfoRecord(r *dnsReader, length uint16) (MInfoRecord, error) {
+func parseMInfoRecord(r *dnsReader) (MInfoRecord, error) {
 	res := MInfoRecord{}
 	var err error
 	res.RMailBX, err = r.ReadName()
@@ -472,7 +503,7 @@ func parseMInfoRecord(r *dnsReader, length uint16) (MInfoRecord, error) {
 	return res, nil
 }
 
-func parseMXRecord(r *dnsReader, length uint16) (MXRecord, error) {
+func parseMXRecord(r *dnsReader) (MXRecord, error) {
 	res := MXRecord{}
 	var err error
 	res.Preference, err = r.ReadUint16()
@@ -486,58 +517,66 @@ func parseMXRecord(r *dnsReader, length uint16) (MXRecord, error) {
 	return res, nil
 }
 
-func parseTXTRecord(r *dnsReader, length uint16) (TXTRecord, error) {
+func parseTXTRecord(r *dnsReader, length int) (TXTRecord, error) {
 	res := TXTRecord{}
 	var recs []string
-	for {
+	startPos := r.pos
+	for r.pos < startPos+length {
 		rec, err := r.ReadString()
 		if err != nil {
 			return TXTRecord{}, err
 		}
 		recs = append(recs, rec)
-		break
 	}
 	res.Data = recs
 	return res, nil
 }
 
-func parseRData(r *dnsReader, rt RecordType, rc RecordClass, length uint16) (RData, error) {
+func parseRData(r *dnsReader, rt RecordType, rc RecordClass, length int) (RData, error) {
 	var res RData
+	var err error
+	startPos := r.pos
 	switch rt {
 	case RTA:
-		return parseARecord(r, length)
+		res, err = parseARecord(r)
 	case RTNS:
-		return parseNSRecord(r, length)
+		res, err = parseNSRecord(r)
 	case RTMD:
-		return parseMDRecord(r, length)
+		res, err = parseMDRecord(r)
 	case RTMF:
-		return parseMFRecord(r, length)
+		res, err = parseMFRecord(r)
 	case RTCNAME:
-		return parseCNameRecord(r, length)
+		res, err = parseCNameRecord(r)
 	case RTSOA:
-		return parseSOARecord(r, length)
+		res, err = parseSOARecord(r)
 	case RTMB:
-		return parseMBRecord(r, length)
+		res, err = parseMBRecord(r)
 	case RTMG:
-		return parseMGRecord(r, length)
+		res, err = parseMGRecord(r)
 	case RTMR:
-		return parseMRRecord(r, length)
+		res, err = parseMRRecord(r)
 	case RTNULL:
-		return parseNullRecord(r, length)
+		res, err = parseNullRecord(r, length)
 	case RTWKS:
-		return parseWKSRecord(r, length)
+		res, err = parseWKSRecord(r, length)
 	case RTPTR:
-		return parsePTRRecord(r, length)
+		res, err = parsePTRRecord(r)
 	case RTHINFO:
-		return parseHInfoRecord(r, length)
+		res, err = parseHInfoRecord(r)
 	case RTMINFO:
-		return parseMInfoRecord(r, length)
+		res, err = parseMInfoRecord(r)
 	case RTMX:
-		return parseMXRecord(r, length)
+		res, err = parseMXRecord(r)
 	case RTTXT:
-		return parseTXTRecord(r, length)
+		res, err = parseTXTRecord(r, length)
 	default:
 		return "", errors.New("Unsupported TYPE")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if r.pos-startPos != length {
+		return nil, errors.New("RData not aligned with RLength")
 	}
 	return res, nil
 }
@@ -566,7 +605,7 @@ func parseDNSResourceRecord(r *dnsReader, count uint16) ([]DNSResourceRecord, er
 		if rr.RDLength, err = r.ReadUint16(); err != nil {
 			return nil, err
 		}
-		if rr.RData, err = parseRData(r, rr.Type, rr.Class, rr.RDLength); err != nil {
+		if rr.RData, err = parseRData(r, rr.Type, rr.Class, int(rr.RDLength)); err != nil {
 			return nil, err
 		}
 		records[i] = rr
@@ -596,6 +635,9 @@ func (r *dnsReader) ReadBytes(n int) ([]byte, error) {
 	if r.pos+n > len(r.data) {
 		return nil, errors.New("Out of bounds while reading bytes")
 	}
+	if n <= 0 {
+		return nil, errors.New("Cannot read non-positive number of bytes")
+	}
 	val := r.data[r.pos : r.pos+n]
 	r.pos += n
 	return val, nil
@@ -608,6 +650,14 @@ func (r *dnsReader) ReadByte() (byte, error) {
 	val := r.data[r.pos]
 	r.pos++
 	return val, nil
+}
+
+func (r *dnsReader) ReadUint8() (uint8, error) {
+	val, err := r.ReadByte()
+	if err != nil {
+		return 0, errors.New("Out of bounds while reading uint8")
+	}
+	return uint8(val), nil
 }
 
 func (r *dnsReader) ReadString() (string, error) {
@@ -648,7 +698,7 @@ func (r *dnsReader) ReadName() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if lead&0xC0 == 0xC0 {
+		if r.parseStatus == parsingResourceRecords && lead&0xC0 == 0xC0 {
 			// Pointer
 			off2, err := r.ReadByte()
 			if err != nil {
