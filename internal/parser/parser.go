@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"slices"
+	"strings"
 )
 
 type MessageType int
@@ -171,8 +173,9 @@ type DNSMessage struct {
 }
 
 type dnsReader struct {
-	data []byte
-	pos  int
+	data        []byte
+	pos         int
+	offsetStack []uint16
 }
 
 func (h *DNSHeader) QR() bool {
@@ -301,7 +304,7 @@ func parseDNSQuestion(r *dnsReader, qdCount uint16) ([]DNSQuestion, error) {
 	return questions, nil
 }
 
-func parseARecord(r *dnsReader) (ARecord, error) {
+func parseARecord(r *dnsReader, length uint16) (ARecord, error) {
 	res := ARecord{}
 	ipBytes, err := r.ReadBytes(4)
 	if err != nil {
@@ -312,7 +315,7 @@ func parseARecord(r *dnsReader) (ARecord, error) {
 	return res, nil
 }
 
-func parseNSRecord(r *dnsReader) (NSRecord, error) {
+func parseNSRecord(r *dnsReader, length uint16) (NSRecord, error) {
 	res := NSRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -322,7 +325,7 @@ func parseNSRecord(r *dnsReader) (NSRecord, error) {
 	return res, nil
 }
 
-func parseMDRecord(r *dnsReader) (MDRecord, error) {
+func parseMDRecord(r *dnsReader, length uint16) (MDRecord, error) {
 	res := MDRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -332,7 +335,7 @@ func parseMDRecord(r *dnsReader) (MDRecord, error) {
 	return res, nil
 }
 
-func parseMFRecord(r *dnsReader) (MFRecord, error) {
+func parseMFRecord(r *dnsReader, length uint16) (MFRecord, error) {
 	res := MFRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -342,7 +345,7 @@ func parseMFRecord(r *dnsReader) (MFRecord, error) {
 	return res, nil
 }
 
-func parseCNameRecord(r *dnsReader) (CNameRecord, error) {
+func parseCNameRecord(r *dnsReader, length uint16) (CNameRecord, error) {
 	res := CNameRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -352,7 +355,7 @@ func parseCNameRecord(r *dnsReader) (CNameRecord, error) {
 	return res, nil
 }
 
-func parseSOARecord(r *dnsReader) (SOARecord, error) {
+func parseSOARecord(r *dnsReader, length uint16) (SOARecord, error) {
 	res := SOARecord{}
 	var err error
 	res.MName, err = r.ReadName()
@@ -386,7 +389,7 @@ func parseSOARecord(r *dnsReader) (SOARecord, error) {
 	return res, nil
 }
 
-func parseMBRecord(r *dnsReader) (MBRecord, error) {
+func parseMBRecord(r *dnsReader, length uint16) (MBRecord, error) {
 	res := MBRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -396,7 +399,7 @@ func parseMBRecord(r *dnsReader) (MBRecord, error) {
 	return res, nil
 }
 
-func parseMGRecord(r *dnsReader) (MGRecord, error) {
+func parseMGRecord(r *dnsReader, length uint16) (MGRecord, error) {
 	res := MGRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -406,7 +409,7 @@ func parseMGRecord(r *dnsReader) (MGRecord, error) {
 	return res, nil
 }
 
-func parseMRRecord(r *dnsReader) (MRRecord, error) {
+func parseMRRecord(r *dnsReader, length uint16) (MRRecord, error) {
 	res := MRRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -416,7 +419,7 @@ func parseMRRecord(r *dnsReader) (MRRecord, error) {
 	return res, nil
 }
 
-func parseNullRecord(r *dnsReader) (NullRecord, error) {
+func parseNullRecord(r *dnsReader, length uint16) (NullRecord, error) {
 	res := NullRecord{}
 	var err error
 	// r is an RDLength slice of the buffer, so this only reads to the end of the RData segment
@@ -427,11 +430,11 @@ func parseNullRecord(r *dnsReader) (NullRecord, error) {
 	return res, nil
 }
 
-func parseWKSRecord(r *dnsReader) (WKSRecord, error) {
+func parseWKSRecord(r *dnsReader, length uint16) (WKSRecord, error) {
 	return WKSRecord{}, nil
 }
 
-func parsePTRRecord(r *dnsReader) (PTRRecord, error) {
+func parsePTRRecord(r *dnsReader, length uint16) (PTRRecord, error) {
 	res := PTRRecord{}
 	var err error
 	res.Name, err = r.ReadName()
@@ -441,7 +444,7 @@ func parsePTRRecord(r *dnsReader) (PTRRecord, error) {
 	return res, nil
 }
 
-func parseHInfoRecord(r *dnsReader) (HInfoRecord, error) {
+func parseHInfoRecord(r *dnsReader, length uint16) (HInfoRecord, error) {
 	res := HInfoRecord{}
 	var err error
 	res.CPU, err = r.ReadString()
@@ -455,7 +458,7 @@ func parseHInfoRecord(r *dnsReader) (HInfoRecord, error) {
 	return res, nil
 }
 
-func parseMInfoRecord(r *dnsReader) (MInfoRecord, error) {
+func parseMInfoRecord(r *dnsReader, length uint16) (MInfoRecord, error) {
 	res := MInfoRecord{}
 	var err error
 	res.RMailBX, err = r.ReadName()
@@ -469,7 +472,7 @@ func parseMInfoRecord(r *dnsReader) (MInfoRecord, error) {
 	return res, nil
 }
 
-func parseMXRecord(r *dnsReader) (MXRecord, error) {
+func parseMXRecord(r *dnsReader, length uint16) (MXRecord, error) {
 	res := MXRecord{}
 	var err error
 	res.Preference, err = r.ReadUint16()
@@ -483,15 +486,16 @@ func parseMXRecord(r *dnsReader) (MXRecord, error) {
 	return res, nil
 }
 
-func parseTXTRecord(r *dnsReader) (TXTRecord, error) {
+func parseTXTRecord(r *dnsReader, length uint16) (TXTRecord, error) {
 	res := TXTRecord{}
 	var recs []string
-	for !r.Done() {
+	for {
 		rec, err := r.ReadString()
 		if err != nil {
 			return TXTRecord{}, err
 		}
 		recs = append(recs, rec)
+		break
 	}
 	res.Data = recs
 	return res, nil
@@ -499,51 +503,41 @@ func parseTXTRecord(r *dnsReader) (TXTRecord, error) {
 
 func parseRData(r *dnsReader, rt RecordType, rc RecordClass, length uint16) (RData, error) {
 	var res RData
-	rr, err := r.Slice(int(length))
-	if err != nil {
-		return nil, err
-	}
 	switch rt {
 	case RTA:
-		res, err = parseARecord(&rr)
+		return parseARecord(r, length)
 	case RTNS:
-		res, err = parseNSRecord(&rr)
+		return parseNSRecord(r, length)
 	case RTMD:
-		res, err = parseMDRecord(&rr)
+		return parseMDRecord(r, length)
 	case RTMF:
-		res, err = parseMFRecord(&rr)
+		return parseMFRecord(r, length)
 	case RTCNAME:
-		res, err = parseCNameRecord(&rr)
+		return parseCNameRecord(r, length)
 	case RTSOA:
-		res, err = parseSOARecord(&rr)
+		return parseSOARecord(r, length)
 	case RTMB:
-		res, err = parseMBRecord(&rr)
+		return parseMBRecord(r, length)
 	case RTMG:
-		res, err = parseMGRecord(&rr)
+		return parseMGRecord(r, length)
 	case RTMR:
-		res, err = parseMRRecord(&rr)
+		return parseMRRecord(r, length)
 	case RTNULL:
-		res, err = parseNullRecord(&rr)
+		return parseNullRecord(r, length)
 	case RTWKS:
-		res, err = parseWKSRecord(&rr)
+		return parseWKSRecord(r, length)
 	case RTPTR:
-		res, err = parsePTRRecord(&rr)
+		return parsePTRRecord(r, length)
 	case RTHINFO:
-		res, err = parseHInfoRecord(&rr)
+		return parseHInfoRecord(r, length)
 	case RTMINFO:
-		res, err = parseMInfoRecord(&rr)
+		return parseMInfoRecord(r, length)
 	case RTMX:
-		res, err = parseMXRecord(&rr)
+		return parseMXRecord(r, length)
 	case RTTXT:
-		res, err = parseTXTRecord(&rr)
+		return parseTXTRecord(r, length)
 	default:
 		return "", errors.New("Unsupported TYPE")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !rr.Done() {
-		return nil, errors.New("RData and RDLength do not align")
 	}
 	return res, nil
 }
@@ -616,19 +610,6 @@ func (r *dnsReader) ReadByte() (byte, error) {
 	return val, nil
 }
 
-func (r *dnsReader) Slice(n int) (dnsReader, error) {
-	if r.pos+n > len(r.data) {
-		return dnsReader{}, errors.New("Out of bounds while creating slice")
-	}
-	slice := dnsReader{data: r.data[r.pos : r.pos+n], pos: 0}
-	r.pos += n
-	return slice, nil
-}
-
-func (r *dnsReader) Done() bool {
-	return r.pos == len(r.data)
-}
-
 func (r *dnsReader) ReadString() (string, error) {
 	length, err := r.ReadByte()
 	if err != nil {
@@ -641,26 +622,58 @@ func (r *dnsReader) ReadString() (string, error) {
 	return string(val), nil
 }
 
+func (r *dnsReader) ReadNameFromOffset(offset uint16) (string, error) {
+	if slices.Contains(r.offsetStack, offset) {
+		return "", errors.New("Cyclical offset detected")
+	}
+	r.offsetStack = append(r.offsetStack, offset)
+
+	startPos := r.pos
+	r.pos = int(offset)
+
+	name, err := r.ReadName()
+	if err != nil {
+		return "", err
+	}
+
+	r.pos = startPos
+	r.offsetStack = r.offsetStack[:len(r.offsetStack)-1]
+	return name, nil
+}
+
 func (r *dnsReader) ReadName() (string, error) {
-	result := ""
+	tokens := make([]string, 0)
 	for {
-		length, err := r.ReadByte()
+		lead, err := r.ReadByte()
 		if err != nil {
 			return "", err
 		}
-		if length == 0 {
+		if lead&0xC0 == 0xC0 {
+			// Pointer
+			off2, err := r.ReadByte()
+			if err != nil {
+				return "", err
+			}
+			offset := uint16(lead&0x3F)<<8 | uint16(off2)
+			token, err := r.ReadNameFromOffset(offset)
+			if err != nil {
+				return "", err
+			}
+			tokens = append(tokens, strings.TrimSuffix(token, "."))
 			break
+		} else if lead == 0 {
+			// End of name
+			break
+		} else {
+			// Label of length lead
+			token, err := r.ReadBytes(int(lead))
+			if err != nil {
+				return "", errors.New("(Q)Name not long enough")
+			}
+			tokens = append(tokens, string(token))
 		}
-		token, err := r.ReadBytes(int(length))
-		if err != nil {
-			return "", errors.New("(Q)Name not long enough")
-		}
-		result += string(token) + "."
 	}
-	if result == "" {
-		result = "."
-	}
-	return result, nil
+	return strings.Join(tokens, ".") + ".", nil
 }
 
 func ParseDNSMessage(query []byte, mode MessageType) (DNSMessage, error) {
