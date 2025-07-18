@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/binary"
 	"errors"
+	"math/rand"
 	"net"
 	"slices"
 	"strings"
@@ -62,6 +63,20 @@ const (
 	NotImp
 	Refused
 )
+
+const (
+	QRMask     = 0x8000
+	OpcodeMask = 0x7800
+	AAMask     = 0x0400
+	TCMask     = 0x0200
+	RDMask     = 0x0100
+	RAMask     = 0x0080
+	ZMask      = 0x0070
+	RCodeMask  = 0x000F
+)
+
+const PointerMask = 0xC0
+const OffsetMask = 0x3F
 
 type parseStatus int
 
@@ -187,54 +202,108 @@ type dnsReader struct {
 	offsetStack []uint16
 }
 
-func (h *DNSHeader) QR() bool {
-	return h.flags&0x8000 != 0
+type dnsSerializer struct {
+	data []byte
 }
 
-func (h *DNSHeader) Opcode() uint8 {
-	return uint8((h.flags & 0x7800) >> 11)
+func (h *DNSHeader) GetQR() bool {
+	return h.flags&QRMask != 0
 }
 
-func (h *DNSHeader) AA() bool {
-	return h.flags&0x0400 != 0
+func (h *DNSHeader) SetQR(b bool) {
+	h.flags &^= QRMask
+	if b {
+		h.flags |= QRMask
+	}
 }
 
-func (h *DNSHeader) TC() bool {
-	return h.flags&0x0200 != 0
+func (h *DNSHeader) GetOpcode() uint8 {
+	return uint8((h.flags & OpcodeMask) >> 11)
 }
 
-func (h *DNSHeader) RD() bool {
-	return h.flags&0x0100 != 0
+func (h *DNSHeader) SetOpcode(opcode uint8) {
+	h.flags &^= OpcodeMask
+	h.flags |= (uint16(opcode) << 11) & OpcodeMask
 }
 
-func (h *DNSHeader) RA() bool {
-	return h.flags&0x0080 != 0
+func (h *DNSHeader) GetAA() bool {
+	return h.flags&AAMask != 0
 }
 
-func (h *DNSHeader) Z() uint8 {
-	return uint8((h.flags & 0x0070) >> 4)
+func (h *DNSHeader) SetAA(b bool) {
+	h.flags &^= AAMask
+	if b {
+		h.flags |= AAMask
+	}
 }
 
-func (h *DNSHeader) RCode() uint8 {
-	return uint8(h.flags & 0x000F)
+func (h *DNSHeader) GetTC() bool {
+	return h.flags&TCMask != 0
+}
+
+func (h *DNSHeader) SetTC(b bool) {
+	h.flags &^= TCMask
+	if b {
+		h.flags |= TCMask
+	}
+}
+
+func (h *DNSHeader) GetRD() bool {
+	return h.flags&RDMask != 0
+}
+
+func (h *DNSHeader) SetRD(b bool) {
+	h.flags &^= RDMask
+	if b {
+		h.flags |= RDMask
+	}
+}
+
+func (h *DNSHeader) GetRA() bool {
+	return h.flags&RAMask != 0
+}
+
+func (h *DNSHeader) SetRA(b bool) {
+	h.flags &^= RAMask
+	if b {
+		h.flags |= RAMask
+	}
+}
+
+func (h *DNSHeader) GetZ() uint8 {
+	return uint8((h.flags & ZMask) >> 4)
+}
+
+func (h *DNSHeader) SetZ(z uint8) {
+	h.flags &^= ZMask
+	h.flags |= (uint16(z) << 4) & ZMask
+}
+
+func (h *DNSHeader) GetRCode() uint8 {
+	return uint8(h.flags & RCodeMask)
+}
+
+func (h *DNSHeader) SetRCode(rcode uint8) {
+	h.flags &^= RCodeMask
+	h.flags |= uint16(rcode) & RCodeMask
 }
 
 func (h *DNSHeader) validateHeader(mode MessageType) error {
 	switch mode {
 	case Query:
-		if h.QR() {
+		if h.GetQR() {
 			return errors.New("QR bit set in query")
 		}
-		if h.AA() {
+		if h.GetAA() {
 			return errors.New("AA bit set in query")
 		}
-		if h.RA() {
+		if h.GetRA() {
 			return errors.New("RA bit set in query")
 		}
-		if h.Z() > 0 {
+		if h.GetZ() > 0 {
 			return errors.New("Z must be zero")
 		}
-		if h.RCode() > 0 {
+		if h.GetRCode() > 0 {
 			return errors.New("RCODE set in query")
 		}
 		if h.QDCount == 0 {
@@ -250,7 +319,7 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 			return errors.New("ARCOUNT set in query")
 		}
 	case Response:
-		if !h.QR() {
+		if !h.GetQR() {
 			return errors.New("QR bit not set in response")
 		}
 		if h.QDCount == 0 {
@@ -260,7 +329,7 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 	return nil
 }
 
-func parseDNSHeader(r *dnsReader, mode MessageType) (DNSHeader, error) {
+func (r *dnsReader) parseDNSHeader(mode MessageType) (DNSHeader, error) {
 	if r.parseStatus != parsingHeader {
 		return DNSHeader{}, errors.New("Parser in incorrect state")
 	}
@@ -294,7 +363,7 @@ func parseDNSHeader(r *dnsReader, mode MessageType) (DNSHeader, error) {
 	return h, nil
 }
 
-func parseDNSQuestion(r *dnsReader, qdCount uint16) ([]DNSQuestion, error) {
+func (r *dnsReader) parseDNSQuestion(qdCount uint16) ([]DNSQuestion, error) {
 	if r.parseStatus != parsingQuestion {
 		return nil, errors.New("Parser in incorrect state")
 	}
@@ -323,11 +392,10 @@ func parseDNSQuestion(r *dnsReader, qdCount uint16) ([]DNSQuestion, error) {
 
 func parseARecord(r *dnsReader) (ARecord, error) {
 	res := ARecord{}
-	ipBytes, err := r.ReadBytes(4)
+	var err error
+	res.IP, err = r.ReadIP()
 	if err != nil {
 		return ARecord{}, err
-	} else {
-		res.IP = net.IP(ipBytes).To4()
 	}
 	return res, nil
 }
@@ -448,11 +516,10 @@ func parseNullRecord(r *dnsReader, length int) (NullRecord, error) {
 
 func parseWKSRecord(r *dnsReader, length int) (WKSRecord, error) {
 	res := WKSRecord{}
-	a, err := r.ReadBytes(4)
+	var err error
+	res.Address, err = r.ReadIP()
 	if err != nil {
 		return WKSRecord{}, err
-	} else {
-		res.Address = net.IP(a).To4()
 	}
 	res.Protocol, err = r.ReadUint8()
 	if err != nil {
@@ -581,7 +648,7 @@ func parseRData(r *dnsReader, rt RecordType, rc RecordClass, length int) (RData,
 	return res, nil
 }
 
-func parseDNSResourceRecord(r *dnsReader, count uint16) ([]DNSResourceRecord, error) {
+func (r *dnsReader) parseDNSResourceRecord(count uint16) ([]DNSResourceRecord, error) {
 	records := make([]DNSResourceRecord, count)
 	var err error
 	for i := 0; i < int(count); i++ {
@@ -672,6 +739,15 @@ func (r *dnsReader) ReadString() (string, error) {
 	return string(val), nil
 }
 
+func (r *dnsReader) ReadIP() (net.IP, error) {
+	ipBytes, err := r.ReadBytes(4)
+	if err != nil {
+		return nil, err
+	}
+	val := net.IP(ipBytes).To4()
+	return val, nil
+}
+
 func (r *dnsReader) ReadNameFromOffset(offset uint16) (string, error) {
 	if slices.Contains(r.offsetStack, offset) {
 		return "", errors.New("Cyclical offset detected")
@@ -698,13 +774,13 @@ func (r *dnsReader) ReadName() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if r.parseStatus == parsingResourceRecords && lead&0xC0 == 0xC0 {
+		if r.parseStatus == parsingResourceRecords && lead&PointerMask == PointerMask {
 			// Pointer
 			off2, err := r.ReadByte()
 			if err != nil {
 				return "", err
 			}
-			offset := uint16(lead&0x3F)<<8 | uint16(off2)
+			offset := uint16(lead&OffsetMask)<<8 | uint16(off2)
 			token, err := r.ReadNameFromOffset(offset)
 			if err != nil {
 				return "", err
@@ -731,18 +807,241 @@ func ParseDNSMessage(query []byte, mode MessageType) (DNSMessage, error) {
 	var err error
 	r := dnsReader{data: query}
 
-	if m.Header, err = parseDNSHeader(&r, mode); err != nil {
+	if m.Header, err = r.parseDNSHeader(mode); err != nil {
 		return DNSMessage{}, err
 	}
 
-	if m.Questions, err = parseDNSQuestion(&r, m.Header.QDCount); err != nil {
+	if m.Questions, err = r.parseDNSQuestion(m.Header.QDCount); err != nil {
 		return DNSMessage{}, err
 	}
 	if mode == Query {
 		return m, nil
 	}
-	if m.Answers, err = parseDNSResourceRecord(&r, m.Header.ANCount); err != nil {
+	if m.Answers, err = r.parseDNSResourceRecord(m.Header.ANCount); err != nil {
 		return DNSMessage{}, err
 	}
 	return m, nil
+}
+
+func generateID() uint16 {
+	return uint16(rand.Intn(1 << 16))
+}
+
+func CreateQuery(domain string, qtype RecordType) []byte {
+	switch qtype {
+	case RTA:
+		query := DNSMessage{
+			Header: DNSHeader{
+				ID:      generateID(),
+				QDCount: 1,
+			},
+			Questions: []DNSQuestion{
+				{
+					QName:  domain,
+					QType:  RTA,
+					QClass: RCIN,
+				},
+			},
+		}
+		bytes, err := serializeDNSMessage(query)
+		if err != nil {
+			return nil
+		}
+		return bytes
+	default:
+		return nil
+	}
+}
+
+func (s *dnsSerializer) writeUint8(v uint8) {
+	s.data = append(s.data, byte(v))
+}
+
+func (s *dnsSerializer) writeUint16(v uint16) {
+	buf := make([]byte, 2)
+	binary.BigEndian.PutUint16(buf, v)
+	s.data = append(s.data, buf...)
+}
+
+func (s *dnsSerializer) writeUint32(v uint32) {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, v)
+	s.data = append(s.data, buf...)
+}
+
+func (s *dnsSerializer) writeByte(v byte) {
+	s.data = append(s.data, v)
+}
+
+func (s *dnsSerializer) writeBytes(v []byte) {
+	s.data = append(s.data, v...)
+}
+
+func (s *dnsSerializer) writeString(v string) {
+	s.writeByte(byte(len(v)))
+	s.writeBytes([]byte(v))
+}
+
+func (s *dnsSerializer) writeName(v string) {
+	for token := range strings.SplitSeq(v, ".") {
+		s.writeString(token)
+	}
+}
+
+func (s *dnsSerializer) writeIP(v net.IP) {
+	s.data = append(s.data, v.To4()...)
+}
+
+func (s *dnsSerializer) serializeARecord(r ARecord) {
+	s.writeIP(r.IP)
+}
+
+func (s *dnsSerializer) serializeNSRecord(r NSRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeMDRecord(r MDRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeMFRecord(r MFRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeCNameRecord(r CNameRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeSOARecord(r SOARecord) {
+	s.writeName(r.MName)
+	s.writeName(r.RName)
+	s.writeUint32(r.Serial)
+	s.writeUint32(r.Refresh)
+	s.writeUint32(r.Retry)
+	s.writeUint32(r.Expire)
+	s.writeUint32(r.Minimum)
+}
+
+func (s *dnsSerializer) serializeMBRecord(r MBRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeMGRecord(r MGRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeMRRecord(r MRRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeNullRecord(r NullRecord) {
+	s.writeBytes(r.Anything)
+}
+
+func (s *dnsSerializer) serializeWKSRecord(r WKSRecord) {
+	s.writeIP(r.Address)
+	s.writeUint8(r.Protocol)
+	s.writeBytes(r.Bitmap)
+}
+
+func (s *dnsSerializer) serializePTRRecord(r PTRRecord) {
+	s.writeName(r.Name)
+}
+
+func (s *dnsSerializer) serializeHInfoRecord(r HInfoRecord) {
+	s.writeString(r.CPU)
+	s.writeString(r.OS)
+}
+
+func (s *dnsSerializer) serializeMInfoRecord(r MInfoRecord) {
+	s.writeString(r.RMailBX)
+	s.writeString(r.EMailBX)
+}
+
+func (s *dnsSerializer) serializeMXRecord(r MXRecord) {
+	s.writeUint16(r.Preference)
+	s.writeString(r.Exchange)
+}
+
+func (s *dnsSerializer) serializeTXTRecord(r TXTRecord) {
+	for _, d := range r.Data {
+		s.writeString(d)
+	}
+}
+
+func (s *dnsSerializer) writeRData(rdata RData) {
+	switch rd := rdata.(type) {
+	case ARecord:
+		s.serializeARecord(rd)
+	case NSRecord:
+		s.serializeNSRecord(rd)
+	case MDRecord:
+		s.serializeMDRecord(rd)
+	case MFRecord:
+		s.serializeMFRecord(rd)
+	case CNameRecord:
+		s.serializeCNameRecord(rd)
+	case SOARecord:
+		s.serializeSOARecord(rd)
+	case MBRecord:
+		s.serializeMBRecord(rd)
+	case MGRecord:
+		s.serializeMGRecord(rd)
+	case MRRecord:
+		s.serializeMRRecord(rd)
+	case NullRecord:
+		s.serializeNullRecord(rd)
+	case WKSRecord:
+		s.serializeWKSRecord(rd)
+	case PTRRecord:
+		s.serializePTRRecord(rd)
+	case HInfoRecord:
+		s.serializeHInfoRecord(rd)
+	case MInfoRecord:
+		s.serializeMInfoRecord(rd)
+	case MXRecord:
+		s.serializeMXRecord(rd)
+	case TXTRecord:
+		s.serializeTXTRecord(rd)
+	default:
+		return
+	}
+}
+
+func serializeDNSHeader(s *dnsSerializer, h DNSHeader) {
+	s.writeUint16(h.ID)
+	s.writeUint16(h.flags)
+	s.writeUint16(h.QDCount)
+	s.writeUint16(h.ANCount)
+	s.writeUint16(h.NSCount)
+	s.writeUint16(h.ARCount)
+}
+
+func serializeDNSQuestion(s *dnsSerializer, qs []DNSQuestion) {
+	for _, q := range qs {
+		s.writeName(q.QName)
+		s.writeUint16(uint16(q.QType))
+		s.writeUint16(uint16(q.QClass))
+	}
+}
+
+func serializeDNSResourceRecord(s *dnsSerializer, rrs []DNSResourceRecord) {
+	for _, rr := range rrs {
+		s.writeName(rr.Name)
+		s.writeUint16(uint16(rr.Type))
+		s.writeUint16(uint16(rr.Class))
+		s.writeUint32(rr.TTL)
+		s.writeUint16(rr.RDLength)
+		s.writeRData(rr.RData)
+	}
+}
+
+func serializeDNSMessage(m DNSMessage) ([]byte, error) {
+	s := dnsSerializer{}
+	serializeDNSHeader(&s, m.Header)
+	serializeDNSQuestion(&s, m.Questions)
+	serializeDNSResourceRecord(&s, m.Answers)
+	serializeDNSResourceRecord(&s, m.Authorities)
+	serializeDNSResourceRecord(&s, m.Additionals)
+	return s.data, nil
 }
