@@ -3,214 +3,135 @@ package parser
 import (
 	"encoding/binary"
 	"errors"
-	"math/rand"
 	"net"
 	"slices"
 	"strings"
 )
 
-type MessageType int
-
-const (
-	Query MessageType = iota
-	Response
-)
-
-type RecordType uint16
-
-const (
-	RTA     RecordType = 1
-	RTNS    RecordType = 2
-	RTMD    RecordType = 3
-	RTMF    RecordType = 4
-	RTCNAME RecordType = 5
-	RTSOA   RecordType = 6
-	RTMB    RecordType = 7
-	RTMG    RecordType = 8
-	RTMR    RecordType = 9
-	RTNULL  RecordType = 10
-	RTWKS   RecordType = 11
-	RTPTR   RecordType = 12
-	RTHINFO RecordType = 13
-	RTMINFO RecordType = 14
-	RTMX    RecordType = 15
-	RTTXT   RecordType = 16
-
-	RTAXFR  RecordType = 252
-	RTMAILB RecordType = 253
-	RTMAILA RecordType = 254
-	RTSTAR  RecordType = 255
-)
-
-type RecordClass uint16
-
-const (
-	RCIN RecordClass = 1
-	RCCS RecordClass = 2
-	RCCH RecordClass = 3
-	RCHS RecordClass = 4
-
-	RCSTAR RecordClass = 255
-)
-
-type RCode uint8
-
-const (
-	NoError RCode = iota
-	FormErr
-	ServFail
-	NXDomain
-	NotImp
-	Refused
-)
-
-const (
-	QRMask     = 0x8000
-	OpcodeMask = 0x7800
-	AAMask     = 0x0400
-	TCMask     = 0x0200
-	RDMask     = 0x0100
-	RAMask     = 0x0080
-	ZMask      = 0x0070
-	RCodeMask  = 0x000F
-)
-
-const PointerMask = 0xC0
-const OffsetMask = 0x3F
-
-type parseStatus int
-
-const (
-	parsingHeader parseStatus = iota
-	parsingQuestion
-	parsingResourceRecords
-)
-
-type RData any
-
-type ARecord struct {
-	IP net.IP
+func (r *dnsReader) readUint16() (uint16, error) {
+	if r.pos+2 > len(r.data) {
+		return 0, errors.New("Out of bounds while reading uint16")
+	}
+	val := binary.BigEndian.Uint16(r.data[r.pos : r.pos+2])
+	r.pos += 2
+	return val, nil
 }
 
-type NSRecord struct {
-	Name string
+func (r *dnsReader) readUint32() (uint32, error) {
+	if r.pos+4 > len(r.data) {
+		return 0, errors.New("Out of bounds while reading uint32")
+	}
+	val := binary.BigEndian.Uint32(r.data[r.pos : r.pos+4])
+	r.pos += 4
+	return val, nil
 }
 
-type MDRecord struct {
-	Name string
+func (r *dnsReader) readBytes(n int) ([]byte, error) {
+	if r.pos+n > len(r.data) {
+		return nil, errors.New("Out of bounds while reading bytes")
+	}
+	if n <= 0 {
+		return nil, errors.New("Cannot read non-positive number of bytes")
+	}
+	val := r.data[r.pos : r.pos+n]
+	r.pos += n
+	return val, nil
 }
 
-type MFRecord struct {
-	Name string
+func (r *dnsReader) readByte() (byte, error) {
+	if r.pos >= len(r.data) {
+		return 0, errors.New("Out of bounds while reading byte")
+	}
+	val := r.data[r.pos]
+	r.pos++
+	return val, nil
 }
 
-type CNameRecord struct {
-	Name string
+func (r *dnsReader) readUint8() (uint8, error) {
+	val, err := r.readByte()
+	if err != nil {
+		return 0, errors.New("Out of bounds while reading uint8")
+	}
+	return uint8(val), nil
 }
 
-type SOARecord struct {
-	MName   string
-	RName   string
-	Serial  uint32
-	Refresh uint32
-	Retry   uint32
-	Expire  uint32
-	Minimum uint32
+func (r *dnsReader) readString() (string, error) {
+	length, err := r.readByte()
+	if err != nil {
+		return "", err
+	}
+	val, err := r.readBytes(int(length))
+	if err != nil {
+		return "", err
+	}
+	return string(val), nil
 }
 
-type MBRecord struct {
-	Name string
+func (r *dnsReader) readIP() (net.IP, error) {
+	ipBytes, err := r.readBytes(4)
+	if err != nil {
+		return nil, err
+	}
+	val := net.IP(ipBytes).To4()
+	return val, nil
 }
 
-type MGRecord struct {
-	Name string
+func (r *dnsReader) readNameFromOffset(offset uint16) (string, error) {
+	if slices.Contains(r.offsetStack, offset) {
+		return "", errors.New("Cyclical offset detected")
+	}
+	r.offsetStack = append(r.offsetStack, offset)
+	startPos := r.pos
+	r.pos = int(offset)
+	name, err := r.readName()
+	if err != nil {
+		return "", err
+	}
+	r.pos = startPos
+	r.offsetStack = r.offsetStack[:len(r.offsetStack)-1]
+	return name, nil
 }
 
-type MRRecord struct {
-	Name string
-}
-
-type NullRecord struct {
-	Anything []byte
-}
-
-type WKSRecord struct {
-	Address  net.IP
-	Protocol uint8
-	Bitmap   []byte
-}
-
-type PTRRecord struct {
-	Name string
-}
-
-type HInfoRecord struct {
-	CPU string
-	OS  string
-}
-
-type MInfoRecord struct {
-	RMailBX string
-	EMailBX string
-}
-
-type MXRecord struct {
-	Preference uint16
-	Exchange   string
-}
-
-type TXTRecord struct {
-	Data []string
-}
-
-type DNSHeader struct {
-	ID      uint16
-	flags   uint16
-	QDCount uint16
-	ANCount uint16
-	NSCount uint16
-	ARCount uint16
-}
-
-type DNSQuestion struct {
-	QName  string
-	QType  RecordType
-	QClass RecordClass
-}
-
-type DNSResourceRecord struct {
-	Name     string
-	Type     RecordType
-	Class    RecordClass
-	TTL      uint32
-	RDLength uint16
-	RData    RData
-}
-
-type DNSMessage struct {
-	Header      DNSHeader
-	Questions   []DNSQuestion
-	Answers     []DNSResourceRecord
-	Authorities []DNSResourceRecord
-	Additionals []DNSResourceRecord
-}
-
-type dnsReader struct {
-	data        []byte
-	pos         int
-	parseStatus parseStatus
-	offsetStack []uint16
-}
-
-type dnsSerializer struct {
-	data []byte
+func (r *dnsReader) readName() (string, error) {
+	tokens := make([]string, 0)
+	for {
+		lead, err := r.readByte()
+		if err != nil {
+			return "", err
+		}
+		if r.parseStatus == parsingResourceRecords && lead&PointerMask == PointerMask {
+			// Pointer
+			off2, err := r.readByte()
+			if err != nil {
+				return "", err
+			}
+			offset := uint16(lead&OffsetMask)<<8 | uint16(off2)
+			token, err := r.readNameFromOffset(offset)
+			if err != nil {
+				return "", err
+			}
+			tokens = append(tokens, strings.TrimSuffix(token, "."))
+			break
+		} else if lead == 0 {
+			// End of name
+			break
+		} else {
+			// Label of length lead
+			token, err := r.readBytes(int(lead))
+			if err != nil {
+				return "", errors.New("(Q)Name not long enough")
+			}
+			tokens = append(tokens, string(token))
+		}
+	}
+	return strings.Join(tokens, ".") + ".", nil
 }
 
 func (h *DNSHeader) GetQR() bool {
 	return h.flags&QRMask != 0
 }
 
-func (h *DNSHeader) SetQR(b bool) {
+func (h *DNSHeader) setQR(b bool) {
 	h.flags &^= QRMask
 	if b {
 		h.flags |= QRMask
@@ -221,7 +142,7 @@ func (h *DNSHeader) GetOpcode() uint8 {
 	return uint8((h.flags & OpcodeMask) >> 11)
 }
 
-func (h *DNSHeader) SetOpcode(opcode uint8) {
+func (h *DNSHeader) setOpcode(opcode uint8) {
 	h.flags &^= OpcodeMask
 	h.flags |= (uint16(opcode) << 11) & OpcodeMask
 }
@@ -230,7 +151,7 @@ func (h *DNSHeader) GetAA() bool {
 	return h.flags&AAMask != 0
 }
 
-func (h *DNSHeader) SetAA(b bool) {
+func (h *DNSHeader) setAA(b bool) {
 	h.flags &^= AAMask
 	if b {
 		h.flags |= AAMask
@@ -241,7 +162,7 @@ func (h *DNSHeader) GetTC() bool {
 	return h.flags&TCMask != 0
 }
 
-func (h *DNSHeader) SetTC(b bool) {
+func (h *DNSHeader) setTC(b bool) {
 	h.flags &^= TCMask
 	if b {
 		h.flags |= TCMask
@@ -252,7 +173,7 @@ func (h *DNSHeader) GetRD() bool {
 	return h.flags&RDMask != 0
 }
 
-func (h *DNSHeader) SetRD(b bool) {
+func (h *DNSHeader) setRD(b bool) {
 	h.flags &^= RDMask
 	if b {
 		h.flags |= RDMask
@@ -263,7 +184,7 @@ func (h *DNSHeader) GetRA() bool {
 	return h.flags&RAMask != 0
 }
 
-func (h *DNSHeader) SetRA(b bool) {
+func (h *DNSHeader) setRA(b bool) {
 	h.flags &^= RAMask
 	if b {
 		h.flags |= RAMask
@@ -274,7 +195,7 @@ func (h *DNSHeader) GetZ() uint8 {
 	return uint8((h.flags & ZMask) >> 4)
 }
 
-func (h *DNSHeader) SetZ(z uint8) {
+func (h *DNSHeader) setZ(z uint8) {
 	h.flags &^= ZMask
 	h.flags |= (uint16(z) << 4) & ZMask
 }
@@ -283,7 +204,7 @@ func (h *DNSHeader) GetRCode() uint8 {
 	return uint8(h.flags & RCodeMask)
 }
 
-func (h *DNSHeader) SetRCode(rcode uint8) {
+func (h *DNSHeader) setRCode(rcode uint8) {
 	h.flags &^= RCodeMask
 	h.flags |= uint16(rcode) & RCodeMask
 }
@@ -328,72 +249,10 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 	}
 	return nil
 }
-
-func (r *dnsReader) parseDNSHeader(mode MessageType) (DNSHeader, error) {
-	if r.parseStatus != parsingHeader {
-		return DNSHeader{}, errors.New("Parser in incorrect state")
-	}
-	h := DNSHeader{}
-	var err error
-
-	if h.ID, err = r.ReadUint16(); err != nil {
-		return DNSHeader{}, err
-	}
-	if h.flags, err = r.ReadUint16(); err != nil {
-		return DNSHeader{}, err
-	}
-	if h.QDCount, err = r.ReadUint16(); err != nil {
-		return DNSHeader{}, err
-	}
-	if h.ANCount, err = r.ReadUint16(); err != nil {
-		return DNSHeader{}, err
-	}
-	if h.NSCount, err = r.ReadUint16(); err != nil {
-		return DNSHeader{}, err
-	}
-	if h.ARCount, err = r.ReadUint16(); err != nil {
-		return DNSHeader{}, err
-	}
-
-	err = h.validateHeader(mode)
-	if err != nil {
-		return DNSHeader{}, err
-	}
-	r.parseStatus = parsingQuestion
-	return h, nil
-}
-
-func (r *dnsReader) parseDNSQuestion(qdCount uint16) ([]DNSQuestion, error) {
-	if r.parseStatus != parsingQuestion {
-		return nil, errors.New("Parser in incorrect state")
-	}
-	questions := make([]DNSQuestion, qdCount)
-	var err error
-	for i := 0; i < int(qdCount); i++ {
-		q := DNSQuestion{}
-		if q.QName, err = r.ReadName(); err != nil {
-			return nil, err
-		}
-		if t, err := r.ReadUint16(); err != nil {
-			return nil, err
-		} else {
-			q.QType = RecordType(t)
-		}
-		if c, err := r.ReadUint16(); err != nil {
-			return nil, err
-		} else {
-			q.QClass = RecordClass(c)
-		}
-		questions[i] = q
-	}
-	r.parseStatus = parsingResourceRecords
-	return questions, nil
-}
-
 func parseARecord(r *dnsReader) (ARecord, error) {
 	res := ARecord{}
 	var err error
-	res.IP, err = r.ReadIP()
+	res.IP, err = r.readIP()
 	if err != nil {
 		return ARecord{}, err
 	}
@@ -403,7 +262,7 @@ func parseARecord(r *dnsReader) (ARecord, error) {
 func parseNSRecord(r *dnsReader) (NSRecord, error) {
 	res := NSRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return NSRecord{}, err
 	}
@@ -413,7 +272,7 @@ func parseNSRecord(r *dnsReader) (NSRecord, error) {
 func parseMDRecord(r *dnsReader) (MDRecord, error) {
 	res := MDRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return MDRecord{}, err
 	}
@@ -423,7 +282,7 @@ func parseMDRecord(r *dnsReader) (MDRecord, error) {
 func parseMFRecord(r *dnsReader) (MFRecord, error) {
 	res := MFRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return MFRecord{}, err
 	}
@@ -433,7 +292,7 @@ func parseMFRecord(r *dnsReader) (MFRecord, error) {
 func parseCNameRecord(r *dnsReader) (CNameRecord, error) {
 	res := CNameRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return CNameRecord{}, err
 	}
@@ -443,31 +302,31 @@ func parseCNameRecord(r *dnsReader) (CNameRecord, error) {
 func parseSOARecord(r *dnsReader) (SOARecord, error) {
 	res := SOARecord{}
 	var err error
-	res.MName, err = r.ReadName()
+	res.MName, err = r.readName()
 	if err != nil {
 		return SOARecord{}, err
 	}
-	res.RName, err = r.ReadName()
+	res.RName, err = r.readName()
 	if err != nil {
 		return SOARecord{}, err
 	}
-	res.Serial, err = r.ReadUint32()
+	res.Serial, err = r.readUint32()
 	if err != nil {
 		return SOARecord{}, err
 	}
-	res.Refresh, err = r.ReadUint32()
+	res.Refresh, err = r.readUint32()
 	if err != nil {
 		return SOARecord{}, err
 	}
-	res.Retry, err = r.ReadUint32()
+	res.Retry, err = r.readUint32()
 	if err != nil {
 		return SOARecord{}, err
 	}
-	res.Expire, err = r.ReadUint32()
+	res.Expire, err = r.readUint32()
 	if err != nil {
 		return SOARecord{}, err
 	}
-	res.Minimum, err = r.ReadUint32()
+	res.Minimum, err = r.readUint32()
 	if err != nil {
 		return SOARecord{}, err
 	}
@@ -477,7 +336,7 @@ func parseSOARecord(r *dnsReader) (SOARecord, error) {
 func parseMBRecord(r *dnsReader) (MBRecord, error) {
 	res := MBRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return MBRecord{}, err
 	}
@@ -487,7 +346,7 @@ func parseMBRecord(r *dnsReader) (MBRecord, error) {
 func parseMGRecord(r *dnsReader) (MGRecord, error) {
 	res := MGRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return MGRecord{}, err
 	}
@@ -497,7 +356,7 @@ func parseMGRecord(r *dnsReader) (MGRecord, error) {
 func parseMRRecord(r *dnsReader) (MRRecord, error) {
 	res := MRRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return MRRecord{}, err
 	}
@@ -507,7 +366,7 @@ func parseMRRecord(r *dnsReader) (MRRecord, error) {
 func parseNullRecord(r *dnsReader, length int) (NullRecord, error) {
 	res := NullRecord{}
 	var err error
-	res.Anything, err = r.ReadBytes(length)
+	res.Anything, err = r.readBytes(length)
 	if err != nil {
 		return NullRecord{}, err
 	}
@@ -517,15 +376,15 @@ func parseNullRecord(r *dnsReader, length int) (NullRecord, error) {
 func parseWKSRecord(r *dnsReader, length int) (WKSRecord, error) {
 	res := WKSRecord{}
 	var err error
-	res.Address, err = r.ReadIP()
+	res.Address, err = r.readIP()
 	if err != nil {
 		return WKSRecord{}, err
 	}
-	res.Protocol, err = r.ReadUint8()
+	res.Protocol, err = r.readUint8()
 	if err != nil {
 		return WKSRecord{}, err
 	}
-	res.Bitmap, err = r.ReadBytes(length - 5)
+	res.Bitmap, err = r.readBytes(length - 5)
 	if err != nil {
 		return WKSRecord{}, err
 	}
@@ -535,7 +394,7 @@ func parseWKSRecord(r *dnsReader, length int) (WKSRecord, error) {
 func parsePTRRecord(r *dnsReader) (PTRRecord, error) {
 	res := PTRRecord{}
 	var err error
-	res.Name, err = r.ReadName()
+	res.Name, err = r.readName()
 	if err != nil {
 		return PTRRecord{}, err
 	}
@@ -545,11 +404,11 @@ func parsePTRRecord(r *dnsReader) (PTRRecord, error) {
 func parseHInfoRecord(r *dnsReader) (HInfoRecord, error) {
 	res := HInfoRecord{}
 	var err error
-	res.CPU, err = r.ReadString()
+	res.CPU, err = r.readString()
 	if err != nil {
 		return HInfoRecord{}, err
 	}
-	res.OS, err = r.ReadString()
+	res.OS, err = r.readString()
 	if err != nil {
 		return HInfoRecord{}, err
 	}
@@ -559,11 +418,11 @@ func parseHInfoRecord(r *dnsReader) (HInfoRecord, error) {
 func parseMInfoRecord(r *dnsReader) (MInfoRecord, error) {
 	res := MInfoRecord{}
 	var err error
-	res.RMailBX, err = r.ReadName()
+	res.RMailBX, err = r.readName()
 	if err != nil {
 		return MInfoRecord{}, err
 	}
-	res.EMailBX, err = r.ReadName()
+	res.EMailBX, err = r.readName()
 	if err != nil {
 		return MInfoRecord{}, err
 	}
@@ -573,11 +432,11 @@ func parseMInfoRecord(r *dnsReader) (MInfoRecord, error) {
 func parseMXRecord(r *dnsReader) (MXRecord, error) {
 	res := MXRecord{}
 	var err error
-	res.Preference, err = r.ReadUint16()
+	res.Preference, err = r.readUint16()
 	if err != nil {
 		return MXRecord{}, err
 	}
-	res.Exchange, err = r.ReadName()
+	res.Exchange, err = r.readName()
 	if err != nil {
 		return MXRecord{}, err
 	}
@@ -589,7 +448,7 @@ func parseTXTRecord(r *dnsReader, length int) (TXTRecord, error) {
 	var recs []string
 	startPos := r.pos
 	for r.pos < startPos+length {
-		rec, err := r.ReadString()
+		rec, err := r.readString()
 		if err != nil {
 			return TXTRecord{}, err
 		}
@@ -653,23 +512,23 @@ func (r *dnsReader) parseDNSResourceRecord(count uint16) ([]DNSResourceRecord, e
 	var err error
 	for i := 0; i < int(count); i++ {
 		rr := DNSResourceRecord{}
-		if rr.Name, err = r.ReadName(); err != nil {
+		if rr.Name, err = r.readName(); err != nil {
 			return nil, err
 		}
-		if t, err := r.ReadUint16(); err != nil {
+		if t, err := r.readUint16(); err != nil {
 			return nil, err
 		} else {
 			rr.Type = RecordType(t)
 		}
-		if c, err := r.ReadUint16(); err != nil {
+		if c, err := r.readUint16(); err != nil {
 			return nil, err
 		} else {
 			rr.Class = RecordClass(c)
 		}
-		if rr.TTL, err = r.ReadUint32(); err != nil {
+		if rr.TTL, err = r.readUint32(); err != nil {
 			return nil, err
 		}
-		if rr.RDLength, err = r.ReadUint16(); err != nil {
+		if rr.RDLength, err = r.readUint16(); err != nil {
 			return nil, err
 		}
 		if rr.RData, err = parseRData(r, rr.Type, rr.Class, int(rr.RDLength)); err != nil {
@@ -680,137 +539,72 @@ func (r *dnsReader) parseDNSResourceRecord(count uint16) ([]DNSResourceRecord, e
 	return records, nil
 }
 
-func (r *dnsReader) ReadUint16() (uint16, error) {
-	if r.pos+2 > len(r.data) {
-		return 0, errors.New("Out of bounds while reading uint16")
+func (r *dnsReader) parseDNSHeader(mode MessageType) (DNSHeader, error) {
+	if r.parseStatus != parsingHeader {
+		return DNSHeader{}, errors.New("Parser in incorrect state")
 	}
-	val := binary.BigEndian.Uint16(r.data[r.pos : r.pos+2])
-	r.pos += 2
-	return val, nil
-}
-
-func (r *dnsReader) ReadUint32() (uint32, error) {
-	if r.pos+4 > len(r.data) {
-		return 0, errors.New("Out of bounds while reading uint32")
+	h := DNSHeader{}
+	var err error
+	if h.ID, err = r.readUint16(); err != nil {
+		return DNSHeader{}, err
 	}
-	val := binary.BigEndian.Uint32(r.data[r.pos : r.pos+4])
-	r.pos += 4
-	return val, nil
-}
-
-func (r *dnsReader) ReadBytes(n int) ([]byte, error) {
-	if r.pos+n > len(r.data) {
-		return nil, errors.New("Out of bounds while reading bytes")
+	if h.flags, err = r.readUint16(); err != nil {
+		return DNSHeader{}, err
 	}
-	if n <= 0 {
-		return nil, errors.New("Cannot read non-positive number of bytes")
+	if h.QDCount, err = r.readUint16(); err != nil {
+		return DNSHeader{}, err
 	}
-	val := r.data[r.pos : r.pos+n]
-	r.pos += n
-	return val, nil
-}
-
-func (r *dnsReader) ReadByte() (byte, error) {
-	if r.pos >= len(r.data) {
-		return 0, errors.New("Out of bounds while reading byte")
+	if h.ANCount, err = r.readUint16(); err != nil {
+		return DNSHeader{}, err
 	}
-	val := r.data[r.pos]
-	r.pos++
-	return val, nil
-}
-
-func (r *dnsReader) ReadUint8() (uint8, error) {
-	val, err := r.ReadByte()
+	if h.NSCount, err = r.readUint16(); err != nil {
+		return DNSHeader{}, err
+	}
+	if h.ARCount, err = r.readUint16(); err != nil {
+		return DNSHeader{}, err
+	}
+	err = h.validateHeader(mode)
 	if err != nil {
-		return 0, errors.New("Out of bounds while reading uint8")
+		return DNSHeader{}, err
 	}
-	return uint8(val), nil
+	r.parseStatus = parsingQuestion
+	return h, nil
 }
 
-func (r *dnsReader) ReadString() (string, error) {
-	length, err := r.ReadByte()
-	if err != nil {
-		return "", err
+func (r *dnsReader) parseDNSQuestion(qdCount uint16) ([]DNSQuestion, error) {
+	if r.parseStatus != parsingQuestion {
+		return nil, errors.New("Parser in incorrect state")
 	}
-	val, err := r.ReadBytes(int(length))
-	if err != nil {
-		return "", err
-	}
-	return string(val), nil
-}
-
-func (r *dnsReader) ReadIP() (net.IP, error) {
-	ipBytes, err := r.ReadBytes(4)
-	if err != nil {
-		return nil, err
-	}
-	val := net.IP(ipBytes).To4()
-	return val, nil
-}
-
-func (r *dnsReader) ReadNameFromOffset(offset uint16) (string, error) {
-	if slices.Contains(r.offsetStack, offset) {
-		return "", errors.New("Cyclical offset detected")
-	}
-	r.offsetStack = append(r.offsetStack, offset)
-
-	startPos := r.pos
-	r.pos = int(offset)
-
-	name, err := r.ReadName()
-	if err != nil {
-		return "", err
-	}
-
-	r.pos = startPos
-	r.offsetStack = r.offsetStack[:len(r.offsetStack)-1]
-	return name, nil
-}
-
-func (r *dnsReader) ReadName() (string, error) {
-	tokens := make([]string, 0)
-	for {
-		lead, err := r.ReadByte()
-		if err != nil {
-			return "", err
+	questions := make([]DNSQuestion, qdCount)
+	var err error
+	for i := 0; i < int(qdCount); i++ {
+		q := DNSQuestion{}
+		if q.QName, err = r.readName(); err != nil {
+			return nil, err
 		}
-		if r.parseStatus == parsingResourceRecords && lead&PointerMask == PointerMask {
-			// Pointer
-			off2, err := r.ReadByte()
-			if err != nil {
-				return "", err
-			}
-			offset := uint16(lead&OffsetMask)<<8 | uint16(off2)
-			token, err := r.ReadNameFromOffset(offset)
-			if err != nil {
-				return "", err
-			}
-			tokens = append(tokens, strings.TrimSuffix(token, "."))
-			break
-		} else if lead == 0 {
-			// End of name
-			break
+		if t, err := r.readUint16(); err != nil {
+			return nil, err
 		} else {
-			// Label of length lead
-			token, err := r.ReadBytes(int(lead))
-			if err != nil {
-				return "", errors.New("(Q)Name not long enough")
-			}
-			tokens = append(tokens, string(token))
+			q.QType = RecordType(t)
 		}
+		if c, err := r.readUint16(); err != nil {
+			return nil, err
+		} else {
+			q.QClass = RecordClass(c)
+		}
+		questions[i] = q
 	}
-	return strings.Join(tokens, ".") + ".", nil
+	r.parseStatus = parsingResourceRecords
+	return questions, nil
 }
 
 func ParseDNSMessage(query []byte, mode MessageType) (DNSMessage, error) {
 	m := DNSMessage{}
 	var err error
 	r := dnsReader{data: query}
-
 	if m.Header, err = r.parseDNSHeader(mode); err != nil {
 		return DNSMessage{}, err
 	}
-
 	if m.Questions, err = r.parseDNSQuestion(m.Header.QDCount); err != nil {
 		return DNSMessage{}, err
 	}
@@ -821,227 +615,4 @@ func ParseDNSMessage(query []byte, mode MessageType) (DNSMessage, error) {
 		return DNSMessage{}, err
 	}
 	return m, nil
-}
-
-func generateID() uint16 {
-	return uint16(rand.Intn(1 << 16))
-}
-
-func CreateQuery(domain string, qtype RecordType) []byte {
-	switch qtype {
-	case RTA:
-		query := DNSMessage{
-			Header: DNSHeader{
-				ID:      generateID(),
-				QDCount: 1,
-			},
-			Questions: []DNSQuestion{
-				{
-					QName:  domain,
-					QType:  RTA,
-					QClass: RCIN,
-				},
-			},
-		}
-		bytes, err := serializeDNSMessage(query)
-		if err != nil {
-			return nil
-		}
-		return bytes
-	default:
-		return nil
-	}
-}
-
-func (s *dnsSerializer) writeUint8(v uint8) {
-	s.data = append(s.data, byte(v))
-}
-
-func (s *dnsSerializer) writeUint16(v uint16) {
-	buf := make([]byte, 2)
-	binary.BigEndian.PutUint16(buf, v)
-	s.data = append(s.data, buf...)
-}
-
-func (s *dnsSerializer) writeUint32(v uint32) {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, v)
-	s.data = append(s.data, buf...)
-}
-
-func (s *dnsSerializer) writeByte(v byte) {
-	s.data = append(s.data, v)
-}
-
-func (s *dnsSerializer) writeBytes(v []byte) {
-	s.data = append(s.data, v...)
-}
-
-func (s *dnsSerializer) writeString(v string) {
-	s.writeByte(byte(len(v)))
-	s.writeBytes([]byte(v))
-}
-
-func (s *dnsSerializer) writeName(v string) {
-	for token := range strings.SplitSeq(v, ".") {
-		s.writeString(token)
-	}
-}
-
-func (s *dnsSerializer) writeIP(v net.IP) {
-	s.data = append(s.data, v.To4()...)
-}
-
-func (s *dnsSerializer) serializeARecord(r ARecord) {
-	s.writeIP(r.IP)
-}
-
-func (s *dnsSerializer) serializeNSRecord(r NSRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeMDRecord(r MDRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeMFRecord(r MFRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeCNameRecord(r CNameRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeSOARecord(r SOARecord) {
-	s.writeName(r.MName)
-	s.writeName(r.RName)
-	s.writeUint32(r.Serial)
-	s.writeUint32(r.Refresh)
-	s.writeUint32(r.Retry)
-	s.writeUint32(r.Expire)
-	s.writeUint32(r.Minimum)
-}
-
-func (s *dnsSerializer) serializeMBRecord(r MBRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeMGRecord(r MGRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeMRRecord(r MRRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeNullRecord(r NullRecord) {
-	s.writeBytes(r.Anything)
-}
-
-func (s *dnsSerializer) serializeWKSRecord(r WKSRecord) {
-	s.writeIP(r.Address)
-	s.writeUint8(r.Protocol)
-	s.writeBytes(r.Bitmap)
-}
-
-func (s *dnsSerializer) serializePTRRecord(r PTRRecord) {
-	s.writeName(r.Name)
-}
-
-func (s *dnsSerializer) serializeHInfoRecord(r HInfoRecord) {
-	s.writeString(r.CPU)
-	s.writeString(r.OS)
-}
-
-func (s *dnsSerializer) serializeMInfoRecord(r MInfoRecord) {
-	s.writeString(r.RMailBX)
-	s.writeString(r.EMailBX)
-}
-
-func (s *dnsSerializer) serializeMXRecord(r MXRecord) {
-	s.writeUint16(r.Preference)
-	s.writeString(r.Exchange)
-}
-
-func (s *dnsSerializer) serializeTXTRecord(r TXTRecord) {
-	for _, d := range r.Data {
-		s.writeString(d)
-	}
-}
-
-func (s *dnsSerializer) writeRData(rdata RData) {
-	switch rd := rdata.(type) {
-	case ARecord:
-		s.serializeARecord(rd)
-	case NSRecord:
-		s.serializeNSRecord(rd)
-	case MDRecord:
-		s.serializeMDRecord(rd)
-	case MFRecord:
-		s.serializeMFRecord(rd)
-	case CNameRecord:
-		s.serializeCNameRecord(rd)
-	case SOARecord:
-		s.serializeSOARecord(rd)
-	case MBRecord:
-		s.serializeMBRecord(rd)
-	case MGRecord:
-		s.serializeMGRecord(rd)
-	case MRRecord:
-		s.serializeMRRecord(rd)
-	case NullRecord:
-		s.serializeNullRecord(rd)
-	case WKSRecord:
-		s.serializeWKSRecord(rd)
-	case PTRRecord:
-		s.serializePTRRecord(rd)
-	case HInfoRecord:
-		s.serializeHInfoRecord(rd)
-	case MInfoRecord:
-		s.serializeMInfoRecord(rd)
-	case MXRecord:
-		s.serializeMXRecord(rd)
-	case TXTRecord:
-		s.serializeTXTRecord(rd)
-	default:
-		return
-	}
-}
-
-func serializeDNSHeader(s *dnsSerializer, h DNSHeader) {
-	s.writeUint16(h.ID)
-	s.writeUint16(h.flags)
-	s.writeUint16(h.QDCount)
-	s.writeUint16(h.ANCount)
-	s.writeUint16(h.NSCount)
-	s.writeUint16(h.ARCount)
-}
-
-func serializeDNSQuestion(s *dnsSerializer, qs []DNSQuestion) {
-	for _, q := range qs {
-		s.writeName(q.QName)
-		s.writeUint16(uint16(q.QType))
-		s.writeUint16(uint16(q.QClass))
-	}
-}
-
-func serializeDNSResourceRecord(s *dnsSerializer, rrs []DNSResourceRecord) {
-	for _, rr := range rrs {
-		s.writeName(rr.Name)
-		s.writeUint16(uint16(rr.Type))
-		s.writeUint16(uint16(rr.Class))
-		s.writeUint32(rr.TTL)
-		s.writeUint16(rr.RDLength)
-		s.writeRData(rr.RData)
-	}
-}
-
-func serializeDNSMessage(m DNSMessage) ([]byte, error) {
-	s := dnsSerializer{}
-	serializeDNSHeader(&s, m.Header)
-	serializeDNSQuestion(&s, m.Questions)
-	serializeDNSResourceRecord(&s, m.Answers)
-	serializeDNSResourceRecord(&s, m.Authorities)
-	serializeDNSResourceRecord(&s, m.Additionals)
-	return s.data, nil
 }
