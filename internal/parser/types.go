@@ -196,5 +196,6 @@ type dnsReader struct {
 }
 
 type dnsSerializer struct {
-	data []byte
+	data  []byte
+	names map[string]int
 }

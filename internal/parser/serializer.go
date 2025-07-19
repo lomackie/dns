@@ -36,8 +36,21 @@ func (s *dnsSerializer) writeString(v string) {
 	s.writeBytes([]byte(v))
 }
 
+func (s *dnsSerializer) writePointer(offset int) {
+	s.writeUint16((uint16(PointerMask) << 8) | uint16(offset))
+}
+
 func (s *dnsSerializer) writeName(v string) {
-	for token := range strings.SplitSeq(v, ".") {
+	tokens := strings.Split(v, ".")
+	for i, token := range tokens {
+		suffix := strings.Join(tokens[i:], ".")
+		offset, ok := s.names[suffix]
+		if ok {
+			s.writePointer(offset)
+			return
+		} else if token != "" {
+			s.names[suffix] = len(s.data)
+		}
 		s.writeString(token)
 	}
 }
