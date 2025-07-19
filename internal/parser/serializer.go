@@ -59,6 +59,56 @@ func (s *dnsSerializer) writeIP(v net.IP) {
 	s.data = append(s.data, v.To4()...)
 }
 
+func (h *DNSHeader) setQR(b bool) {
+	h.flags &^= QRMask
+	if b {
+		h.flags |= QRMask
+	}
+}
+
+func (h *DNSHeader) setOpcode(opcode uint8) {
+	h.flags &^= OpcodeMask
+	h.flags |= (uint16(opcode) << 11) & OpcodeMask
+}
+
+func (h *DNSHeader) setAA(b bool) {
+	h.flags &^= AAMask
+	if b {
+		h.flags |= AAMask
+	}
+}
+
+func (h *DNSHeader) setTC(b bool) {
+	h.flags &^= TCMask
+	if b {
+		h.flags |= TCMask
+	}
+}
+
+func (h *DNSHeader) setRD(b bool) {
+	h.flags &^= RDMask
+	if b {
+		h.flags |= RDMask
+	}
+}
+
+func (h *DNSHeader) setRA(b bool) {
+	h.flags &^= RAMask
+	if b {
+		h.flags |= RAMask
+	}
+}
+
+func (h *DNSHeader) setZ(z uint8) {
+	h.flags &^= ZMask
+	h.flags |= (uint16(z) << 4) & ZMask
+}
+
+func (h *DNSHeader) setRCode(rcode uint8) {
+	h.flags &^= RCodeMask
+	h.flags |= uint16(rcode) & RCodeMask
+}
+
 func (s *dnsSerializer) serializeARecord(r ARecord) {
 	s.writeIP(r.IP)
 }

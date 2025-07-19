@@ -131,82 +131,31 @@ func (h *DNSHeader) GetQR() bool {
 	return h.flags&QRMask != 0
 }
 
-func (h *DNSHeader) setQR(b bool) {
-	h.flags &^= QRMask
-	if b {
-		h.flags |= QRMask
-	}
-}
-
 func (h *DNSHeader) GetOpcode() uint8 {
 	return uint8((h.flags & OpcodeMask) >> 11)
-}
-
-func (h *DNSHeader) setOpcode(opcode uint8) {
-	h.flags &^= OpcodeMask
-	h.flags |= (uint16(opcode) << 11) & OpcodeMask
 }
 
 func (h *DNSHeader) GetAA() bool {
 	return h.flags&AAMask != 0
 }
-
-func (h *DNSHeader) setAA(b bool) {
-	h.flags &^= AAMask
-	if b {
-		h.flags |= AAMask
-	}
-}
-
 func (h *DNSHeader) GetTC() bool {
 	return h.flags&TCMask != 0
-}
-
-func (h *DNSHeader) setTC(b bool) {
-	h.flags &^= TCMask
-	if b {
-		h.flags |= TCMask
-	}
 }
 
 func (h *DNSHeader) GetRD() bool {
 	return h.flags&RDMask != 0
 }
 
-func (h *DNSHeader) setRD(b bool) {
-	h.flags &^= RDMask
-	if b {
-		h.flags |= RDMask
-	}
-}
-
 func (h *DNSHeader) GetRA() bool {
 	return h.flags&RAMask != 0
-}
-
-func (h *DNSHeader) setRA(b bool) {
-	h.flags &^= RAMask
-	if b {
-		h.flags |= RAMask
-	}
 }
 
 func (h *DNSHeader) GetZ() uint8 {
 	return uint8((h.flags & ZMask) >> 4)
 }
 
-func (h *DNSHeader) setZ(z uint8) {
-	h.flags &^= ZMask
-	h.flags |= (uint16(z) << 4) & ZMask
-}
-
 func (h *DNSHeader) GetRCode() uint8 {
 	return uint8(h.flags & RCodeMask)
-}
-
-func (h *DNSHeader) setRCode(rcode uint8) {
-	h.flags &^= RCodeMask
-	h.flags |= uint16(rcode) & RCodeMask
 }
 
 func (h *DNSHeader) validateHeader(mode MessageType) error {
