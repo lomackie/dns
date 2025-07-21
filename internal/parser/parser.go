@@ -192,9 +192,6 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 		if !h.GetQR() {
 			return errors.New("QR bit not set in response")
 		}
-		if h.QDCount == 0 {
-			return errors.New("QCount not non-zero in response")
-		}
 	}
 	return nil
 }

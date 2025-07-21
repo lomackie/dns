@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math/rand"
 	"net"
 	"strings"
@@ -41,7 +42,11 @@ func (s *dnsSerializer) writePointer(offset int) {
 }
 
 func (s *dnsSerializer) writeName(v string) {
+	if !strings.HasSuffix(".", v) {
+		v += "."
+	}
 	tokens := strings.Split(v, ".")
+	fmt.Printf("%v\n", tokens)
 	for i, token := range tokens {
 		suffix := strings.Join(tokens[i:], ".")
 		offset, ok := s.names[suffix]
