@@ -42,9 +42,6 @@ func (s *dnsSerializer) writePointer(offset int) {
 }
 
 func (s *dnsSerializer) writeName(v string) {
-	if !strings.HasSuffix(".", v) {
-		v += "."
-	}
 	tokens := strings.Split(v, ".")
 	fmt.Printf("%v\n", tokens)
 	for i, token := range tokens {
@@ -57,6 +54,9 @@ func (s *dnsSerializer) writeName(v string) {
 			s.names[suffix] = len(s.data)
 		}
 		s.writeString(token)
+	}
+	if !strings.HasSuffix(v, ".") {
+		s.writeByte(0)
 	}
 }
 
