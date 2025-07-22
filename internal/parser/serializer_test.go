@@ -29,7 +29,7 @@ func TestCreateQuery_SerializesToExpectedBytes(t *testing.T) {
 		},
 		{
 			name:   "valid NS query for google.com",
-			domain: "google.com.",
+			domain: "google.com",
 			qtype:  RTNS,
 			expectedWire: []byte{
 				0x00, 0x00, 0x00, 0x00,

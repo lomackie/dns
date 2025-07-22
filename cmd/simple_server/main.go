@@ -2,7 +2,7 @@ package main
 
 import (
 	"dns/internal/parser"
-	"fmt"
+	"dns/internal/resolver"
 	"log"
 	"net"
 )
@@ -20,20 +20,12 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		remoteAddr, _ := net.ResolveUDPAddr("udp", "1.1.1.1:53")
-		remoteConn, _ := net.DialUDP("udp", nil, remoteAddr)
-		remoteConn.Write(buf[:n])
-		fmt.Println(m)
-
-		resp := make([]byte, 512)
-		rn, _, err := remoteConn.ReadFromUDP(resp)
-		fmt.Println(resp[:rn])
-		conn.WriteToUDP(resp[:rn], clientAddr)
-		m2, err := parser.ParseDNSMessage(resp[:rn], parser.Response)
+		ans, err := resolver.Resolve(m.Questions[0].QName, m.Questions[0].QType)
+		ans.Header.ID = m.Header.ID
+		resp := parser.SerializeDNSMessage(ans)
+		conn.WriteToUDP(resp, clientAddr)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(m2)
-
 	}
 }

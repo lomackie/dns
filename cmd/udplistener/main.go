@@ -2,6 +2,7 @@ package main
 
 import (
 	"dns/internal/parser"
+	"dns/internal/resolver"
 	"fmt"
 	"log"
 	"net"
@@ -20,6 +21,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(m)
+		ans, err := resolver.Resolve(m.Questions[0].QName, m.Questions[0].QType)
+		fmt.Println(ans)
 	}
 }
