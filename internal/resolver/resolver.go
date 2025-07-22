@@ -43,7 +43,7 @@ func getAuthorities(msg parser.DNSMessage) map[string]net.IP {
 	}
 	for _, additional := range msg.Additionals {
 		ip := getRecordIP(additional)
-		if getRecordIP(additional) != nil {
+		if ip != nil {
 			authorities[additional.Name] = ip
 		}
 	}

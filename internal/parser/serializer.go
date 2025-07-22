@@ -256,7 +256,7 @@ func (s *dnsSerializer) serializeDNSResourceRecord(rrs []DNSResourceRecord) {
 	}
 }
 
-func serializeDNSMessage(m DNSMessage) []byte {
+func SerializeDNSMessage(m DNSMessage) []byte {
 	s := dnsSerializer{names: make(map[string]int)}
 	s.serializeDNSHeader(m.Header)
 	s.serializeDNSQuestion(m.Questions)
@@ -271,7 +271,7 @@ func generateID() uint16 {
 }
 
 func CreateQuery(domain string, qtype RecordType) []byte {
-	return serializeDNSMessage(DNSMessage{
+	return SerializeDNSMessage(DNSMessage{
 		Header: DNSHeader{
 			ID:      generateID(),
 			QDCount: 1,
