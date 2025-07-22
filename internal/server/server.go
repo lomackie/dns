@@ -24,26 +24,50 @@ func SendMessage(data []byte, host net.IP, protocol Protocol) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		conn.Write(data)
+		defer conn.Close()
+		_, err = conn.Write(data)
+		if err != nil {
+			return nil, err
+		}
 
 		resp := make([]byte, 512)
 		n, _, err := conn.ReadFromUDP(resp)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("Response bytes: %v\n", resp[:n])
+		fmt.Printf("UDP Response bytes: %v\n", resp[:n])
 		return resp[:n], nil
 	case TCP:
-		addr, err := net.ResolveTCPAddr("udp", fmt.Sprintf("%v:53", host))
+		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:53", host))
 		if err != nil {
 			return nil, err
 		}
 		conn, err := net.DialTCP("tcp", nil, addr)
-		conn.Write(data)
-		resp := make([]byte, 512)
-		n, err := conn.Read(resp)
-		fmt.Printf("Response bytes: %v\n", resp[:n])
-		return resp[:n], nil
+		if err != nil {
+			return nil, err
+		}
+		defer conn.Close()
+
+		length := uint16(len(data))
+		lengthBuf := []byte{byte(length >> 8), byte(length & 0xFF)}
+		_, err = conn.Write(append(lengthBuf, data...))
+		if err != nil {
+			return nil, err
+		}
+
+		lengthPre := make([]byte, 2)
+		_, err = conn.Read(lengthPre)
+		if err != nil {
+			return nil, err
+		}
+		respLength := int(lengthPre[0])<<8 | int(lengthPre[1])
+		resp := make([]byte, respLength)
+		_, err = conn.Read(resp)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("TCP Response bytes: %v\n", resp)
+		return resp, nil
 	default:
 		return nil, errors.New("?")
 	}
