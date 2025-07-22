@@ -29,6 +29,8 @@ const (
 	RTMX    RecordType = 15
 	RTTXT   RecordType = 16
 
+	RTAAAA RecordType = 28
+
 	RTAXFR  RecordType = 252
 	RTMAILB RecordType = 253
 	RTMAILA RecordType = 254
@@ -154,6 +156,10 @@ type MXRecord struct {
 
 type TXTRecord struct {
 	Data []string
+}
+
+type AAAARecord struct {
+	IP net.IP
 }
 
 type DNSHeader struct {
