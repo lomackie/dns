@@ -7,10 +7,15 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"time"
 )
 
+type Resolver struct {
+	cache *cache
+}
+
 var rootServers = []net.IP{
-	net.IPv4(192, 41, 0, 4),
+	//net.IPv4(192, 41, 0, 4),
 	net.IPv4(170, 247, 170, 2),
 	net.IPv4(192, 33, 4, 12),
 	net.IPv4(199, 7, 91, 13),
@@ -50,7 +55,23 @@ func getAuthorities(msg parser.DNSMessage) map[string]net.IP {
 	return authorities
 }
 
-func getAuthority(msg parser.DNSMessage) (net.IP, error) {
+func getCacheTTL(ttl uint32) time.Duration {
+	return time.Second * time.Duration(ttl)
+}
+
+func (r *Resolver) cacheMessage(domain string, msg parser.DNSMessage) {
+	for _, record := range msg.Answers {
+		r.cache.Add(domain, record)
+	}
+	for _, record := range msg.Authorities {
+		r.cache.Add(domain, record)
+	}
+	for _, record := range msg.Additionals {
+		r.cache.Add(domain, record)
+	}
+}
+
+func (r *Resolver) getAuthority(msg parser.DNSMessage) (net.IP, error) {
 	authorities := getAuthorities(msg)
 	for _, v := range authorities {
 		if v != nil {
@@ -58,11 +79,11 @@ func getAuthority(msg parser.DNSMessage) (net.IP, error) {
 		}
 	}
 	for k, _ := range authorities {
-		msg, err := Resolve(k, parser.RTA)
+		ans, err := r.Resolve(k, parser.RTA, parser.RCIN)
 		if err != nil {
 			continue
 		}
-		ip := getRecordIP(msg.Answers[0])
+		ip := getRecordIP(ans[rand.Intn(len(ans))])
 		if ip != nil {
 			return ip, nil
 		}
@@ -70,9 +91,8 @@ func getAuthority(msg parser.DNSMessage) (net.IP, error) {
 	return nil, errors.New("Could not resolve any authorities")
 }
 
-func resolveOnce(domain string, qtype parser.RecordType, ns net.IP, protocol server.Protocol) (parser.DNSMessage, error) {
-	q := parser.CreateQuery(domain, qtype)
-	fmt.Printf("Outgoing query: %v\n", q)
+func (r *Resolver) resolveOnce(domain string, qtype parser.RecordType, qclass parser.RecordClass, ns net.IP, protocol server.Protocol) (parser.DNSMessage, error) {
+	q := parser.CreateQuery(domain, qtype, qclass)
 	res, err := server.SendMessage(q, ns, protocol)
 	if err != nil {
 		return parser.DNSMessage{}, err
@@ -84,25 +104,53 @@ func resolveOnce(domain string, qtype parser.RecordType, ns net.IP, protocol ser
 	return msg, nil
 }
 
-func Resolve(domain string, qtype parser.RecordType) (parser.DNSMessage, error) {
+func (r *Resolver) Resolve(domain string, qtype parser.RecordType, qclass parser.RecordClass) ([]parser.DNSResourceRecord, error) {
+	val, found := r.cache.Get(cacheKey{domain, qtype, qclass})
+	if found {
+		fmt.Println("Cache hit")
+		return val, nil
+	}
 	ns := getRootNameserver()
 	for {
-		msg, err := resolveOnce(domain, qtype, ns, server.UDP)
+		msg, err := r.resolveOnce(domain, qtype, qclass, ns, server.UDP)
 		if err != nil {
-			return parser.DNSMessage{}, err
+			return nil, err
 		}
 		if msg.Header.GetTC() {
-			msg, err = resolveOnce(domain, qtype, ns, server.TCP)
+			msg, err = r.resolveOnce(domain, qtype, qclass, ns, server.TCP)
 			if err != nil {
-				return parser.DNSMessage{}, err
+				return nil, err
 			}
 		}
-		if len(msg.Answers) > 0 {
-			return msg, nil
+		if msg.Header.ANCount > 0 {
+			r.cacheMessage(domain, msg)
+			return msg.Answers, nil
 		}
-		ns, err = getAuthority(msg)
+		ns, err = r.getAuthority(msg)
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (r *Resolver) ResolveQuery(q parser.DNSMessage) (parser.DNSMessage, error) {
+	answers := make([]parser.DNSResourceRecord, 0)
+	for _, question := range q.Questions {
+		domain := question.QName
+		qtype := question.QType
+		qclass := question.QClass
+
+		ans, err := r.Resolve(domain, qtype, qclass)
 		if err != nil {
 			return parser.DNSMessage{}, err
 		}
+		answers = append(answers, ans...)
+	}
+	return parser.CreateResponseMessage(q, answers), nil
+}
+
+func NewResolver() Resolver {
+	return Resolver{
+		cache: NewCache(),
 	}
 }
