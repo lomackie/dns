@@ -3,6 +3,7 @@ package main
 import (
 	"dns/internal/parser"
 	"dns/internal/resolver"
+	"fmt"
 	"log"
 	"net"
 )
@@ -12,6 +13,7 @@ func main() {
 	conn, _ := net.ListenUDP("udp", addr)
 	defer conn.Close()
 
+	r := resolver.NewResolver()
 	log.Println("Listening on :53")
 	buf := make([]byte, 512)
 	for {
@@ -20,9 +22,13 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		ans, err := resolver.Resolve(m.Questions[0].QName, m.Questions[0].QType)
-		ans.Header.ID = m.Header.ID
+		ans, err := r.ResolveQuery(m)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Our resolution:%v\n", ans)
 		resp := parser.SerializeDNSMessage(ans)
+		fmt.Printf("Our response:%v\n", resp)
 		conn.WriteToUDP(resp, clientAddr)
 		if err != nil {
 			log.Fatal(err)

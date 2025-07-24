@@ -270,7 +270,22 @@ func generateID() uint16 {
 	return uint16(rand.Intn(1 << 16))
 }
 
-func CreateQuery(domain string, qtype RecordType) []byte {
+func CreateResponseMessage(q DNSMessage, answers []DNSResourceRecord) DNSMessage {
+	header := DNSHeader{
+		ID:      q.Header.ID,
+		QDCount: q.Header.QDCount,
+		ANCount: uint16(len(answers)),
+	}
+	header.setQR(true)
+	header.setRA(true)
+	return DNSMessage{
+		Header:    header,
+		Questions: q.Questions,
+		Answers:   answers,
+	}
+}
+
+func CreateQuery(domain string, qtype RecordType, qclass RecordClass) []byte {
 	return SerializeDNSMessage(DNSMessage{
 		Header: DNSHeader{
 			ID:      generateID(),
@@ -280,7 +295,7 @@ func CreateQuery(domain string, qtype RecordType) []byte {
 			{
 				QName:  domain,
 				QType:  qtype,
-				QClass: RCIN,
+				QClass: qclass,
 			},
 		},
 	})
