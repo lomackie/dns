@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
-	"time"
 )
 
 type Resolver struct {
@@ -53,10 +52,6 @@ func getAuthorities(msg parser.DNSMessage) map[string]net.IP {
 		}
 	}
 	return authorities
-}
-
-func getCacheTTL(ttl uint32) time.Duration {
-	return time.Second * time.Duration(ttl)
 }
 
 func (r *Resolver) cacheMessage(domain string, msg parser.DNSMessage) {
