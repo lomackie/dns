@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"strings"
@@ -140,8 +141,8 @@ func (h *DNSHeader) GetQR() bool {
 	return h.flags&QRMask != 0
 }
 
-func (h *DNSHeader) GetOpcode() uint8 {
-	return uint8((h.flags & OpcodeMask) >> 11)
+func (h *DNSHeader) GetOpcode() OpCode {
+	return OpCode((h.flags & OpcodeMask) >> 11)
 }
 
 func (h *DNSHeader) GetAA() bool {
@@ -163,8 +164,8 @@ func (h *DNSHeader) GetZ() uint8 {
 	return uint8((h.flags & ZMask) >> 4)
 }
 
-func (h *DNSHeader) GetRCode() uint8 {
-	return uint8(h.flags & RCodeMask)
+func (h *DNSHeader) GetRCode() RCode {
+	return RCode(h.flags & RCodeMask)
 }
 
 func (h *DNSHeader) validateHeader(mode MessageType) error {
@@ -178,9 +179,6 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 		}
 		if h.GetRA() {
 			return errors.New("RA bit set in query")
-		}
-		if h.GetZ() > 0 {
-			return errors.New("Z must be zero")
 		}
 		if h.GetRCode() > 0 {
 			return errors.New("RCODE set in query")
@@ -197,11 +195,18 @@ func (h *DNSHeader) validateHeader(mode MessageType) error {
 		if h.ARCount > 0 {
 			return errors.New("ARCOUNT set in query")
 		}
+		if h.GetOpcode() > OCSTATUS {
+			return NotImpError{fmt.Errorf("Unsupported OPCODE %s", h.GetOpcode()), h.ID}
+		}
 	case Response:
 		if !h.GetQR() {
 			return errors.New("QR bit not set in response")
 		}
 	}
+	if h.GetZ() > 0 {
+		return errors.New("Z must be zero")
+	}
+
 	return nil
 }
 func (r *dnsReader) parseARecord() (ARecord, error) {
@@ -463,43 +468,50 @@ func (r *dnsReader) parseRData(rt RecordType, rc RecordClass, length int) (RData
 	case RTAAAA:
 		res, err = r.parseAAAARecord()
 	default:
-		return "", errors.New("Unsupported TYPE")
+		return nil, NotImpError{fmt.Errorf("Unsupported record type %v", rt), r.id}
 	}
 	if err != nil {
-		return nil, err
+		return nil, FormError{fmt.Errorf("Error parsing RData: %w", err), r.id}
 	}
 	if r.pos-startPos != length {
-		return nil, errors.New("RData not aligned with RLength")
+		return nil, FormError{errors.New("RData not aligned with RLength"), r.id}
 	}
 	return res, nil
 }
 
 func (r *dnsReader) parseDNSResourceRecord(count uint16) ([]DNSResourceRecord, error) {
+	if r.parseStatus != parsingResourceRecords {
+		return nil, ServFailError{errors.New("Parser is in incorrect state"), r.id}
+	}
 	records := make([]DNSResourceRecord, count)
 	var err error
 	for i := 0; i < int(count); i++ {
 		rr := DNSResourceRecord{}
 		if rr.Name, err = r.readName(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
 		}
 		if t, err := r.readUint16(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
 		} else {
 			rr.Type = RecordType(t)
 		}
 		if c, err := r.readUint16(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
 		} else {
 			rr.Class = RecordClass(c)
 		}
 		if rr.TTL, err = r.readUint32(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
 		}
 		if rr.RDLength, err = r.readUint16(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
 		}
 		if rr.RData, err = r.parseRData(rr.Type, rr.Class, int(rr.RDLength)); err != nil {
-			return nil, err
+			var nie NotImpError
+			if errors.As(err, &nie) {
+				return nil, NotImpError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
+			}
+			return nil, FormError{fmt.Errorf("Error parsing ResourceRecord: %w", err), r.id}
 		}
 		records[i] = rr
 	}
@@ -508,31 +520,36 @@ func (r *dnsReader) parseDNSResourceRecord(count uint16) ([]DNSResourceRecord, e
 
 func (r *dnsReader) parseDNSHeader(mode MessageType) (DNSHeader, error) {
 	if r.parseStatus != parsingHeader {
-		return DNSHeader{}, errors.New("Parser in incorrect state")
+		return DNSHeader{}, errors.New("Parser is in incorrect state reading header")
 	}
 	h := DNSHeader{}
 	var err error
 	if h.ID, err = r.readUint16(); err != nil {
-		return DNSHeader{}, err
+		return DNSHeader{}, fmt.Errorf("Error parsing DNSHeader: %w", err)
 	}
+	r.id = h.ID
 	if h.flags, err = r.readUint16(); err != nil {
-		return DNSHeader{}, err
+		return DNSHeader{}, FormError{fmt.Errorf("Error parsing DNSHeader: %w", err), r.id}
 	}
 	if h.QDCount, err = r.readUint16(); err != nil {
-		return DNSHeader{}, err
+		return DNSHeader{}, FormError{fmt.Errorf("Error parsing DNSHeader: %w", err), r.id}
 	}
 	if h.ANCount, err = r.readUint16(); err != nil {
-		return DNSHeader{}, err
+		return DNSHeader{}, FormError{fmt.Errorf("Error parsing DNSHeader: %w", err), r.id}
 	}
 	if h.NSCount, err = r.readUint16(); err != nil {
-		return DNSHeader{}, err
+		return DNSHeader{}, FormError{fmt.Errorf("Error parsing DNSHeader: %w", err), r.id}
 	}
 	if h.ARCount, err = r.readUint16(); err != nil {
-		return DNSHeader{}, err
+		return DNSHeader{}, FormError{fmt.Errorf("Error parsing DNSHeader: %w", err), r.id}
 	}
 	err = h.validateHeader(mode)
 	if err != nil {
-		return DNSHeader{}, err
+		var nie NotImpError
+		if errors.As(err, &nie) {
+			return DNSHeader{}, NotImpError{fmt.Errorf("Error validating DNSHeader:"), r.id}
+		}
+		return DNSHeader{}, FormError{fmt.Errorf("Error validating DNSHeader: %w", err), r.id}
 	}
 	r.parseStatus = parsingQuestion
 	return h, nil
@@ -540,22 +557,22 @@ func (r *dnsReader) parseDNSHeader(mode MessageType) (DNSHeader, error) {
 
 func (r *dnsReader) parseDNSQuestion(qdCount uint16) ([]DNSQuestion, error) {
 	if r.parseStatus != parsingQuestion {
-		return nil, errors.New("Parser in incorrect state")
+		return nil, ServFailError{errors.New("Parser is in incorrect state"), r.id}
 	}
 	questions := make([]DNSQuestion, qdCount)
 	var err error
 	for i := 0; i < int(qdCount); i++ {
 		q := DNSQuestion{}
 		if q.QName, err = r.readName(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error validating DNSHeader: %w", err), r.id}
 		}
 		if t, err := r.readUint16(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error validating DNSHeader: %w", err), r.id}
 		} else {
 			q.QType = RecordType(t)
 		}
 		if c, err := r.readUint16(); err != nil {
-			return nil, err
+			return nil, FormError{fmt.Errorf("Error validating DNSHeader: %w", err), r.id}
 		} else {
 			q.QClass = RecordClass(c)
 		}

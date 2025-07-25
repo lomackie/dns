@@ -7,40 +7,40 @@ import (
 	"strings"
 )
 
-func (s *dnsSerializer) writeUint8(v uint8) {
+func (s *dnsWriter) writeUint8(v uint8) {
 	s.data = append(s.data, byte(v))
 }
 
-func (s *dnsSerializer) writeUint16(v uint16) {
+func (s *dnsWriter) writeUint16(v uint16) {
 	buf := make([]byte, 2)
 	binary.BigEndian.PutUint16(buf, v)
 	s.data = append(s.data, buf...)
 }
 
-func (s *dnsSerializer) writeUint32(v uint32) {
+func (s *dnsWriter) writeUint32(v uint32) {
 	buf := make([]byte, 4)
 	binary.BigEndian.PutUint32(buf, v)
 	s.data = append(s.data, buf...)
 }
 
-func (s *dnsSerializer) writeByte(v byte) {
+func (s *dnsWriter) writeByte(v byte) {
 	s.data = append(s.data, v)
 }
 
-func (s *dnsSerializer) writeBytes(v []byte) {
+func (s *dnsWriter) writeBytes(v []byte) {
 	s.data = append(s.data, v...)
 }
 
-func (s *dnsSerializer) writeString(v string) {
+func (s *dnsWriter) writeString(v string) {
 	s.writeByte(byte(len(v)))
 	s.writeBytes([]byte(v))
 }
 
-func (s *dnsSerializer) writePointer(offset int) {
+func (s *dnsWriter) writePointer(offset int) {
 	s.writeUint16((uint16(PointerMask) << 8) | uint16(offset))
 }
 
-func (s *dnsSerializer) writeName(v string) {
+func (s *dnsWriter) writeName(v string) {
 	tokens := strings.Split(v, ".")
 	for i, token := range tokens {
 		suffix := strings.Join(tokens[i:], ".")
@@ -58,7 +58,7 @@ func (s *dnsSerializer) writeName(v string) {
 	}
 }
 
-func (s *dnsSerializer) writeIP(v net.IP) {
+func (s *dnsWriter) writeIP(v net.IP) {
 	s.data = append(s.data, v.To4()...)
 }
 
@@ -112,27 +112,27 @@ func (h *DNSHeader) setRCode(rcode uint8) {
 	h.flags |= uint16(rcode) & RCodeMask
 }
 
-func (s *dnsSerializer) serializeARecord(r ARecord) {
+func (s *dnsWriter) serializeARecord(r ARecord) {
 	s.writeIP(r.IP)
 }
 
-func (s *dnsSerializer) serializeNSRecord(r NSRecord) {
+func (s *dnsWriter) serializeNSRecord(r NSRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeMDRecord(r MDRecord) {
+func (s *dnsWriter) serializeMDRecord(r MDRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeMFRecord(r MFRecord) {
+func (s *dnsWriter) serializeMFRecord(r MFRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeCNameRecord(r CNameRecord) {
+func (s *dnsWriter) serializeCNameRecord(r CNameRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeSOARecord(r SOARecord) {
+func (s *dnsWriter) serializeSOARecord(r SOARecord) {
 	s.writeName(r.MName)
 	s.writeName(r.RName)
 	s.writeUint32(r.Serial)
@@ -142,54 +142,54 @@ func (s *dnsSerializer) serializeSOARecord(r SOARecord) {
 	s.writeUint32(r.Minimum)
 }
 
-func (s *dnsSerializer) serializeMBRecord(r MBRecord) {
+func (s *dnsWriter) serializeMBRecord(r MBRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeMGRecord(r MGRecord) {
+func (s *dnsWriter) serializeMGRecord(r MGRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeMRRecord(r MRRecord) {
+func (s *dnsWriter) serializeMRRecord(r MRRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeNullRecord(r NullRecord) {
+func (s *dnsWriter) serializeNullRecord(r NullRecord) {
 	s.writeBytes(r.Anything)
 }
 
-func (s *dnsSerializer) serializeWKSRecord(r WKSRecord) {
+func (s *dnsWriter) serializeWKSRecord(r WKSRecord) {
 	s.writeIP(r.Address)
 	s.writeUint8(r.Protocol)
 	s.writeBytes(r.Bitmap)
 }
 
-func (s *dnsSerializer) serializePTRRecord(r PTRRecord) {
+func (s *dnsWriter) serializePTRRecord(r PTRRecord) {
 	s.writeName(r.Name)
 }
 
-func (s *dnsSerializer) serializeHInfoRecord(r HInfoRecord) {
+func (s *dnsWriter) serializeHInfoRecord(r HInfoRecord) {
 	s.writeString(r.CPU)
 	s.writeString(r.OS)
 }
 
-func (s *dnsSerializer) serializeMInfoRecord(r MInfoRecord) {
+func (s *dnsWriter) serializeMInfoRecord(r MInfoRecord) {
 	s.writeString(r.RMailBX)
 	s.writeString(r.EMailBX)
 }
 
-func (s *dnsSerializer) serializeMXRecord(r MXRecord) {
+func (s *dnsWriter) serializeMXRecord(r MXRecord) {
 	s.writeUint16(r.Preference)
 	s.writeString(r.Exchange)
 }
 
-func (s *dnsSerializer) serializeTXTRecord(r TXTRecord) {
+func (s *dnsWriter) serializeTXTRecord(r TXTRecord) {
 	for _, d := range r.Data {
 		s.writeString(d)
 	}
 }
 
-func (s *dnsSerializer) writeRData(rdata RData) {
+func (s *dnsWriter) writeRData(rdata RData) {
 	switch rd := rdata.(type) {
 	case ARecord:
 		s.serializeARecord(rd)
@@ -228,7 +228,7 @@ func (s *dnsSerializer) writeRData(rdata RData) {
 	}
 }
 
-func (s *dnsSerializer) serializeDNSHeader(h DNSHeader) {
+func (s *dnsWriter) serializeDNSHeader(h DNSHeader) {
 	s.writeUint16(h.ID)
 	s.writeUint16(h.flags)
 	s.writeUint16(h.QDCount)
@@ -237,7 +237,7 @@ func (s *dnsSerializer) serializeDNSHeader(h DNSHeader) {
 	s.writeUint16(h.ARCount)
 }
 
-func (s *dnsSerializer) serializeDNSQuestion(qs []DNSQuestion) {
+func (s *dnsWriter) serializeDNSQuestion(qs []DNSQuestion) {
 	for _, q := range qs {
 		s.writeName(q.QName)
 		s.writeUint16(uint16(q.QType))
@@ -245,7 +245,7 @@ func (s *dnsSerializer) serializeDNSQuestion(qs []DNSQuestion) {
 	}
 }
 
-func (s *dnsSerializer) serializeDNSResourceRecord(rrs []DNSResourceRecord) {
+func (s *dnsWriter) serializeDNSResourceRecord(rrs []DNSResourceRecord) {
 	for _, rr := range rrs {
 		s.writeName(rr.Name)
 		s.writeUint16(uint16(rr.Type))
@@ -257,7 +257,7 @@ func (s *dnsSerializer) serializeDNSResourceRecord(rrs []DNSResourceRecord) {
 }
 
 func SerializeDNSMessage(m DNSMessage) []byte {
-	s := dnsSerializer{names: make(map[string]int)}
+	s := dnsWriter{names: make(map[string]int)}
 	s.serializeDNSHeader(m.Header)
 	s.serializeDNSQuestion(m.Questions)
 	s.serializeDNSResourceRecord(m.Answers)
@@ -270,7 +270,7 @@ func generateID() uint16 {
 	return uint16(rand.Intn(1 << 16))
 }
 
-func CreateResponseMessage(q DNSMessage, answers []DNSResourceRecord) DNSMessage {
+func CreateAnswerMessage(q DNSMessage, answers []DNSResourceRecord) DNSMessage {
 	header := DNSHeader{
 		ID:      q.Header.ID,
 		QDCount: q.Header.QDCount,
@@ -299,4 +299,16 @@ func CreateQuery(domain string, qtype RecordType, qclass RecordClass) []byte {
 			},
 		},
 	})
+}
+
+func CreateErrorResponseMessage(err CustomError) DNSMessage {
+	header := DNSHeader{
+		ID: err.GetID(),
+	}
+	header.setQR(true)
+	header.setRA(true)
+	header.setRCode(uint8(FormErr))
+	return DNSMessage{
+		Header: header,
+	}
 }

@@ -80,7 +80,7 @@ func TestCreateQuery_SerializesToExpectedBytes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			query := CreateQuery(tt.domain, tt.qtype)
+			query := CreateQuery(tt.domain, tt.qtype, RCIN)
 			if len(query) != len(tt.expectedWire) {
 				t.Fatalf("length mismatch: got %d, want %d", len(query), len(tt.expectedWire))
 			}

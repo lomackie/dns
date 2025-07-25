@@ -2,8 +2,11 @@ package resolver
 
 import (
 	"dns/internal/parser"
+	"fmt"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type cachedResourceRecord struct {
@@ -17,13 +20,19 @@ type cacheKey struct {
 	Class parser.RecordClass
 }
 
+func (ck cacheKey) String() string {
+	return fmt.Sprintf("%s; %v; %v", ck.Name, ck.Class, ck.Type)
+}
+
 type cache struct {
 	records map[cacheKey][]cachedResourceRecord
+	logger  *zap.Logger
 	mu      sync.RWMutex
 }
 
 func (c *cache) ClearExpired(k cacheKey) {
 	c.mu.Lock()
+	c.logger.Debug("Cleaning up cache", zap.String("Key", k.String()))
 	records := getLiveCachedResourceRecords(c.records[k])
 	if len(records) > 0 {
 		c.records[k] = records
@@ -85,8 +94,9 @@ func (c *cache) Add(domain string, v parser.DNSResourceRecord) {
 	c.mu.Unlock()
 }
 
-func NewCache() *cache {
+func NewCache(logger *zap.Logger) *cache {
 	return &cache{
 		records: make(map[cacheKey][]cachedResourceRecord),
+		logger:  logger,
 	}
 }
