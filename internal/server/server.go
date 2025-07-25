@@ -35,7 +35,6 @@ func SendMessage(data []byte, host net.IP, protocol Protocol) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("UDP Response bytes: %v\n", resp[:n])
 		return resp[:n], nil
 	case TCP:
 		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:53", host))
@@ -66,7 +65,6 @@ func SendMessage(data []byte, host net.IP, protocol Protocol) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("TCP Response bytes: %v\n", resp)
 		return resp, nil
 	default:
 		return nil, errors.New("?")

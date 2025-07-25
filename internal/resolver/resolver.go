@@ -4,17 +4,18 @@ import (
 	"dns/internal/parser"
 	"dns/internal/server"
 	"errors"
-	"fmt"
 	"math/rand"
 	"net"
+
+	"go.uber.org/zap"
 )
 
 type Resolver struct {
-	cache *cache
+	cache  *cache
+	logger *zap.Logger
 }
 
 var rootServers = []net.IP{
-	//net.IPv4(192, 41, 0, 4),
 	net.IPv4(170, 247, 170, 2),
 	net.IPv4(192, 33, 4, 12),
 	net.IPv4(199, 7, 91, 13),
@@ -22,9 +23,7 @@ var rootServers = []net.IP{
 	net.IPv4(192, 5, 5, 251),
 	net.IPv4(198, 97, 190, 53),
 	net.IPv4(192, 36, 148, 17),
-	net.IPv4(192, 58, 128, 30),
 	net.IPv4(193, 0, 14, 129),
-	net.IPv4(199, 7, 83, 43),
 	net.IPv4(202, 12, 27, 33),
 }
 
@@ -100,24 +99,30 @@ func (r *Resolver) resolveOnce(domain string, qtype parser.RecordType, qclass pa
 }
 
 func (r *Resolver) Resolve(domain string, qtype parser.RecordType, qclass parser.RecordClass) ([]parser.DNSResourceRecord, error) {
-	val, found := r.cache.Get(cacheKey{domain, qtype, qclass})
+	ck := cacheKey{domain, qtype, qclass}
+	val, found := r.cache.Get(ck)
 	if found {
-		fmt.Println("Cache hit")
+		r.logger.Debug("Cache hit", zap.String("Key", ck.String()))
 		return val, nil
 	}
 	ns := getRootNameserver()
 	for {
+		r.logger.Debug("Resolving", zap.String("Nameserver", ns.String()))
 		msg, err := r.resolveOnce(domain, qtype, qclass, ns, server.UDP)
 		if err != nil {
 			return nil, err
 		}
+		r.logger.Debug("Intermediate response", zap.String("Message", msg.String()))
 		if msg.Header.GetTC() {
+			r.logger.Debug("Response was truncated, Retrying with TCP")
 			msg, err = r.resolveOnce(domain, qtype, qclass, ns, server.TCP)
+			r.logger.Debug("Intermediate response", zap.String("Message", msg.String()))
 			if err != nil {
 				return nil, err
 			}
 		}
 		if msg.Header.ANCount > 0 {
+			r.logger.Debug("Answer recieved")
 			r.cacheMessage(domain, msg)
 			return msg.Answers, nil
 		}
@@ -141,11 +146,12 @@ func (r *Resolver) ResolveQuery(q parser.DNSMessage) (parser.DNSMessage, error) 
 		}
 		answers = append(answers, ans...)
 	}
-	return parser.CreateResponseMessage(q, answers), nil
+	return parser.CreateAnswerMessage(q, answers), nil
 }
 
-func NewResolver() Resolver {
+func NewResolver(logger *zap.Logger) Resolver {
 	return Resolver{
-		cache: NewCache(),
+		cache:  NewCache(logger),
+		logger: logger,
 	}
 }
