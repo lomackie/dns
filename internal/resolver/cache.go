@@ -79,9 +79,9 @@ func (c *cache) Get(k cacheKey) ([]parser.DNSResourceRecord, bool) {
 	return result, len(result) > 0
 }
 
-func (c *cache) Add(domain string, v parser.DNSResourceRecord) {
+func (c *cache) Add(v parser.DNSResourceRecord) {
 	c.mu.Lock()
-	k := cacheKey{domain, v.Type, v.Class}
+	k := cacheKey{v.Name, v.Type, v.Class}
 	crrs, ok := c.records[k]
 	if !ok {
 		crrs = make([]cachedResourceRecord, 0, 1)

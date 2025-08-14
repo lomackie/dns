@@ -5,6 +5,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 func makeARecord(name string, ttl uint32) parser.DNSResourceRecord {
@@ -18,12 +20,12 @@ func makeARecord(name string, ttl uint32) parser.DNSResourceRecord {
 }
 
 func TestCache_AddAndGet_NoExpiry(t *testing.T) {
-	c := NewCache()
+	c := NewCache(zap.NewNop())
 	domain := "example.com."
 	key := cacheKey{Name: domain, Type: parser.RTA, Class: parser.RCIN}
 	record := makeARecord(domain, 60)
 
-	c.Add(domain, record)
+	c.Add(record)
 
 	got, ok := c.Get(key)
 	if !ok || len(got) != 1 {
@@ -36,12 +38,12 @@ func TestCache_AddAndGet_NoExpiry(t *testing.T) {
 }
 
 func TestCache_ExpiredRecordIsNotReturned(t *testing.T) {
-	c := NewCache()
+	c := NewCache(zap.NewNop())
 	domain := "expired.com."
 	key := cacheKey{Name: domain, Type: parser.RTA, Class: parser.RCIN}
 	record := makeARecord(domain, 1)
 
-	c.Add(domain, record)
+	c.Add(record)
 
 	// Wait for expiry
 	time.Sleep(2 * time.Second)
@@ -53,15 +55,15 @@ func TestCache_ExpiredRecordIsNotReturned(t *testing.T) {
 }
 
 func TestCache_AddMultipleAndRetrieve(t *testing.T) {
-	c := NewCache()
+	c := NewCache(zap.NewNop())
 	domain := "multi.com."
 	key := cacheKey{Name: domain, Type: parser.RTA, Class: parser.RCIN}
 
 	r1 := makeARecord(domain, 10)
 	r2 := makeARecord(domain, 10)
 
-	c.Add(domain, r1)
-	c.Add(domain, r2)
+	c.Add(r1)
+	c.Add(r2)
 
 	got, ok := c.Get(key)
 	if !ok || len(got) != 2 {
@@ -70,7 +72,7 @@ func TestCache_AddMultipleAndRetrieve(t *testing.T) {
 }
 
 func TestCache_ConcurrentAccess(t *testing.T) {
-	c := NewCache()
+	c := NewCache(zap.NewNop())
 	domain := "concurrent.com."
 	rr := makeARecord(domain, 10)
 
@@ -78,7 +80,7 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 
 	for i := 0; i < goroutines; i++ {
 		go func() {
-			c.Add(domain, rr)
+			c.Add(rr)
 		}()
 		go func() {
 			c.Get(cacheKey{rr.Name, rr.Type, rr.Class})
@@ -94,13 +96,13 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestCache_ClearExpiredCleansUp(t *testing.T) {
-	c := NewCache()
+	c := NewCache(zap.NewNop())
 	domain := "cleanup.com."
 	valid := makeARecord(domain, 5)
 	expired := makeARecord(domain, 1)
 
-	c.Add(domain, valid)
-	c.Add(domain, expired)
+	c.Add(valid)
+	c.Add(expired)
 
 	time.Sleep(2 * time.Second)
 
